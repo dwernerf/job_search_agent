@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from types import TracebackType
+from typing import Any
+
+from .config import JobAgentConfig
+from .models import LinkCandidate, PageSnapshot
+from .structured import extract_jobpostings, structured_jobs_as_text
+
+
+class BrowserSession:
+    def __init__(self, config: JobAgentConfig) -> None:
+        self.config = config
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._context: Any = None
+
+    def __enter__(self) -> "BrowserSession":
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "Playwright is not installed. Run `pip install -e .` and `playwright install --with-deps chromium`."
+            ) from exc
+
+        self._playwright = sync_playwright().start()
+        browser_type = getattr(self._playwright, self.config.browser.engine)
+        self._browser = browser_type.launch(headless=self.config.browser.headless)
+        self._context = self._browser.new_context(
+            user_agent=self.config.app.user_agent,
+            viewport={
+                "width": self.config.browser.viewport_width,
+                "height": self.config.browser.viewport_height,
+            },
+        )
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if self._context is not None:
+            self._context.close()
+        if self._browser is not None:
+            self._browser.close()
+        if self._playwright is not None:
+            self._playwright.stop()
+
+    def fetch(self, url: str) -> PageSnapshot:
+        if self._context is None:
+            raise RuntimeError("BrowserSession must be used as a context manager")
+
+        page = self._context.new_page()
+        page.set_default_timeout(self.config.browser.navigation_timeout_ms)
+
+        try:
+            response = page.goto(
+                url,
+                wait_until=self.config.browser.wait_until,
+                timeout=self.config.browser.navigation_timeout_ms,
+            )
+            status_code = int(response.status) if response is not None else 0
+            if (
+                self.config.browser.fail_on_http_error_statuses
+                and status_code >= self.config.browser.http_error_status_min
+            ):
+                raise RuntimeError(f"HTTP {status_code} while opening {url}")
+
+            if self.config.browser.network_idle_timeout_ms > 0:
+                try:
+                    page.wait_for_load_state(
+                        "networkidle",
+                        timeout=self.config.browser.network_idle_timeout_ms,
+                    )
+                except Exception:
+                    pass
+
+            title = page.title() or ""
+
+            try:
+                text = page.locator("body").inner_text(
+                    timeout=self.config.browser.body_text_timeout_ms
+                )
+            except Exception:
+                text = ""
+
+            raw_links = page.eval_on_selector_all(
+                "a",
+                """els => els.map(a => ({
+                    text: (a.innerText || a.getAttribute('aria-label') || a.getAttribute('title') || '').trim(),
+                    url: a.href || a.getAttribute('href') || ''
+                })).filter(x => x.url)""",
+            )
+
+            links = [
+                LinkCandidate(text=str(item.get("text") or ""), url=str(item.get("url") or ""))
+                for item in raw_links[: self.config.crawler.max_raw_links_retained]
+            ]
+
+            try:
+                raw_json_ld = page.eval_on_selector_all(
+                    "script[type='application/ld+json']",
+                    "els => els.map(e => e.textContent || '').filter(Boolean)",
+                )
+            except Exception:
+                raw_json_ld = []
+
+            structured_jobs = extract_jobpostings([str(x) for x in raw_json_ld], page.url or url)
+            structured_text = structured_jobs_as_text(structured_jobs)
+            if structured_text:
+                text = (text + "\n\n" + structured_text).strip()
+
+            return PageSnapshot(
+                url=url,
+                final_url=page.url or url,
+                title=title,
+                text=text,
+                links=links,
+                structured_jobs=structured_jobs,
+                status_code=status_code,
+            )
+        finally:
+            page.close()

@@ -1,0 +1,22 @@
+# Public starting points for the Munich / München procurement, purchasing, supply-chain,
+# supplier-quality, optics/laser/photonics, and technical-buyer search.
+# Keep one URL per line. The agent will expand from these pages.
+
+# Broad Munich job-board result pages
+https://www.stepstone.de/jobs/procurement-manager/in-m%C3%BCnchen
+https://www.stepstone.de/jobs/purchasing-manager/in-m%C3%BCnchen
+https://www.stepstone.de/jobs/einkaufsmanager/in-m%C3%BCnchen
+https://de.indeed.com/q-procurement-manager-l-m%C3%BCnchen-jobs.html
+https://www.xing.com/jobs/procurement-manager-jobs-in-m%C3%BCnchen
+https://www.stellenanzeigen.de/jobs/procurement/muenchen/
+
+# Current public examples that match the role family and help the source-memory loop start.
+https://futrue.jobs.personio.de/job/2526728?language=de
+https://join.com/companies/encosa615/16332705-manager-projekteinkauf-bess-project-procurement-manager-bess-m-w-d
+https://join.com/companies/vitafy/16358245-senior-strategic-procurement-manager-m-w-d
+
+# Industry/company career pages around optics, lasers, photonics, electronics, and precision/high-tech manufacturing.
+https://www.zeiss.com/career/de/stellensuche.html
+https://www.trumpf.com/de_INT/karriere/stellenangebote/
+https://www.rohde-schwarz.com/de/karriere/stellenangebote/karriere-stellenangebote_251573.html
+https://jobs.hensoldt.net/
