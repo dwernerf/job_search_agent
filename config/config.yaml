@@ -40,7 +40,7 @@ prompts:
 
 llm:
   # OpenAI-compatible llama.cpp endpoint.
-  base_url: http://127.0.0.1:8085/v1
+  base_url: http://127.0.0.1:8087/v1
 
   # Model name sent to llama.cpp. Most local servers accept "local".
   model: local
@@ -144,7 +144,9 @@ score_consistency:
 
 companies:
   # Drop exported jobs from these companies. Leave empty unless needed.
-  blacklist: []
+  blacklist:
+    - Futrue GmbH
+    
 
   # Company names for focused whitelist searches.
   # The agent will derive direct career-page candidates from known_domains and
@@ -165,6 +167,10 @@ companies:
     - BMW
     - Isar Aerospace
     - Rheinmetall
+    - TYTAN
+    - Helsing
+    - Quantum Systems
+    - Stark
 
   # In whitelist_only mode, only browse/save pages that can be tied to a whitelist company.
   enforce_whitelist_in_whitelist_only: true

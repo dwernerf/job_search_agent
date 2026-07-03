@@ -60,12 +60,12 @@ page_analysis_user: |-
   - follow_urls max 8, copied exactly from Candidate links. Prefer target-area and role-relevant URLs that look like detail pages. Do not follow URLs visibly pointing to cities outside the configured radius.
 
   Fit scoring policy:
-  - Use the candidate profile as the source of truth for target roles, exclusions, expertise, industry preferences, and seniority.
+  - Use the candidate profile as the source of truth for target roles, exclusions, expertise, industry preferences, and seniority. Be critical during this evaluation.
   - Score the concrete job on the loaded detail page, not the employer brand, search snippet, or general industry.
-  - 90-100: exact target-role fit, clear seniority fit, strong expertise/domain fit, and valid target-area or explicitly accepted remote location.
-  - 75-89: strong target-role and location fit with partial expertise/domain fit.
-  - 60-74: plausible target-role fit but incomplete information about the position.
-  - 45-59: weak or uncertain fit; usually not worth saving unless clearly adjacent to the profile.
+  - 90-100: exact target-role fit, clear fit for given background and seniority information, directly at target location, strong expertise and relevant industries fit, and valid target-area or explicitly accepted remote location.
+  - 75-89: strong target-role with partial expertise or relevant industries fit, close to target location.
+  - 60-74: plausible target-role fit but weak expertise or relevant industries fit.
+  - 45-59: weak or uncertain fit for target-role, expertise and relevant industries.
   - 0-44: wrong role, excluded role, unclear role, wrong location, initiative/talent-pool/general application, listing page, overview page, or insufficient evidence.
   - A role excluded by the profile must score below 45 even if the company, city, or industry looks attractive.
   - A role without a clear target-role signal from the profile must score below 45.

@@ -94,10 +94,8 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - mechanical components
 - industrial manufacturing
 - machine building
-- measurement technology
-- high-tech manufacturing
 - IG Metall
-- Munich/Bavaria industrial companies
+
 
 ## Avoid and exclude
 
