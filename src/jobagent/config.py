@@ -160,23 +160,6 @@ def default_broad_location_terms() -> list[str]:
     return ["Bayern", "Bavaria", "Oberbayern", "Germany", "Deutschland", "DACH", "Europe", "Europa", "EMEA"]
 
 
-def default_search_url_templates() -> list[str]:
-    # Avoid generic search engines by default. In local crawling they frequently
-    # return 403/CAPTCHA pages and waste pages. Job portals are still allowed.
-    return [
-        "https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany",
-        "https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen",
-        "https://www.stellenanzeigen.de/jobs/{query_slug}/muenchen",
-    ]
-
-
-def default_whitelist_job_portal_search_templates() -> list[str]:
-    return [
-        "https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany",
-        "https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen",
-    ]
-
-
 def default_career_page_search_templates() -> list[str]:
     # Empty by default because public search engines often return 403/CAPTCHA pages
     # in unattended crawls. Add an allowed search endpoint here, for example a
@@ -186,43 +169,6 @@ def default_career_page_search_templates() -> list[str]:
 
 def default_company_domain_suffixes() -> list[str]:
     return [".com", ".de", ".net"]
-
-
-def default_known_company_domains() -> dict[str, list[str]]:
-    # This is not a seed list. It is company metadata used to derive career-page
-    # candidates generically from the whitelist. Users can add/remove entries
-    # without touching config/seeds.txt.
-    return {
-        "ZEISS": ["zeiss.com"],
-        "TRUMPF": ["trumpf.com", "trumpf.wd3.myworkdayjobs.com"],
-        "Rohde & Schwarz": ["rohde-schwarz.com"],
-        "HENSOLDT": ["hensoldt.net", "hensoldt.com"],
-        "OSRAM": ["ams-osram.com", "osram.com"],
-        "Airbus Defence & Space": ["airbus.com"],
-        "Coherent": ["coherent.com"],
-        "SUSS MicroTec": ["suss.com", "sussmicrotec.com"],
-        "TOPTICA Photonics": ["toptica.com"],
-        "Blickfeld": ["blickfeld.com"],
-        "Marvel Fusion": ["marvelfusion.com"],
-        "BMW": ["bmwgroup.jobs", "bmw.com", "bmwgroup.com"],
-        "Isar Aerospace": ["isaraerospace.com"],
-        "Rheinmetall": ["rheinmetall.com"],
-    }
-
-
-def default_company_portal_role_terms() -> list[str]:
-    return [
-        "Procurement Manager",
-        "Purchasing Manager",
-        "Strategic Buyer",
-        "Technical Buyer",
-        "Supply Chain Manager",
-        "Supplier Quality Manager",
-        "Einkauf",
-        "Strategischer Einkauf",
-        "Technischer Einkäufer",
-        "Lieferantenqualität",
-    ]
 
 
 def default_city_coordinates() -> dict[str, tuple[float, float]]:
@@ -295,12 +241,14 @@ class AppConfig(StrictModel):
 
 
 class TargetConfig(StrictModel):
-    local_area: str = "Munich, Germany"
+    # local_area is filled from config/intent.yaml on startup.
+    local_area: str = ""
     roles: list[str] = Field(default_factory=list)
     include_remote: bool = True
-    languages: list[str] = Field(default_factory=lambda: ["German", "English"])
+    # languages is filled from config/intent.yaml on startup.
+    languages: list[str] = Field(default_factory=list)
 
-    @field_validator("roles", "languages")
+    @field_validator("roles")
     @classmethod
     def clean_list(cls, value: list[str]) -> list[str]:
         return [x.strip() for x in value if str(x).strip()]
@@ -530,11 +478,12 @@ class JobValidationConfig(StrictModel):
 
 class LocationRadiusConfig(StrictModel):
     enabled: bool = True
-    target_city: str = "Munich"
+    # target_city, latitude, longitude, radius_km are filled from config/intent.yaml.
+    target_city: str = ""
     target_country_terms: list[str] = Field(default_factory=lambda: ["Germany", "Deutschland", "DE", "DACH"])
-    latitude: float = 48.137154
-    longitude: float = 11.576124
-    radius_km: float = Field(default=30.0, gt=0)
+    latitude: float = 0.0
+    longitude: float = 0.0
+    radius_km: float = Field(default=30.0, ge=0)
     hard_drop_outside_radius: bool = True
     require_location_for_non_remote: bool = True
     allow_remote_if_country_match: bool = True
@@ -632,8 +581,10 @@ class ExplorationConfig(StrictModel):
     max_follow_urls_without_llm: int = Field(default=0, ge=0)
     job_portal_domain_substrings: list[str] = Field(default_factory=lambda: ["linkedin.com/jobs", "indeed.", "stepstone.", "stellenanzeigen.", "xing.com/jobs", "monster.", "kimeta.", "jobs.de", "jobvector.", "yourfirm.", "glassdoor."])
     bootstrap_query_templates: list[str] = Field(default_factory=default_bootstrap_templates)
-    search_url_templates: list[str] = Field(default_factory=default_search_url_templates)
-    whitelist_job_portal_search_templates: list[str] = Field(default_factory=default_whitelist_job_portal_search_templates)
+    # search_url_templates and whitelist_job_portal_search_templates are filled
+    # from config/intent.yaml on startup.
+    search_url_templates: list[str] = Field(default_factory=list)
+    whitelist_job_portal_search_templates: list[str] = Field(default_factory=list)
     local_area_terms: list[str] = Field(default_factory=list)
     source_discovery_terms: list[str] = Field(default_factory=list)
 
@@ -663,6 +614,7 @@ class CompanyFiltersConfig(StrictModel):
     # Names in blacklist drop matched jobs. Names in whitelist generate focused
     # company-specific search queries during seeding. Put exact company names here;
     # direct career URLs still belong in config/seeds.txt.
+    # Defaults are filled from config/intent.yaml on startup.
     blacklist: list[str] = Field(default_factory=list)
     whitelist: list[str] = Field(default_factory=list)
     whitelist_search_when_seeding: bool = True
@@ -670,7 +622,8 @@ class CompanyFiltersConfig(StrictModel):
     # Direct company career-page discovery is derived from these domains plus
     # standard career paths. This keeps whitelist-only mode focused without
     # stuffing company URLs into config/seeds.txt.
-    known_domains: dict[str, list[str]] = Field(default_factory=default_known_company_domains)
+    # Default is filled from config/intent.yaml on startup.
+    known_domains: dict[str, list[str]] = Field(default_factory=dict)
     # false by default: inferred domains such as airbusdefencespace.com create many
     # 404s. Keep company-domain metadata explicit and editable.
     infer_domains_from_company_names: bool = False
@@ -689,7 +642,8 @@ class CompanyFiltersConfig(StrictModel):
 
     # Company+role job-portal searches use simple portal syntax, not Google-style
     # OR expressions, because LinkedIn/StepStone generally treat OR/parentheses as text.
-    portal_role_terms: list[str] = Field(default_factory=default_company_portal_role_terms)
+    # Default is filled from config/intent.yaml on startup.
+    portal_role_terms: list[str] = Field(default_factory=list)
     max_portal_role_terms_per_company: int = Field(default=6, ge=0)
     max_search_queries_per_company: int = Field(default=0, ge=0)
 
@@ -739,6 +693,40 @@ class LoggingConfig(StrictModel):
     max_notes_chars: int = Field(default=220, gt=0)
 
 
+# ---------------------------------------------------------------------------
+# IntentConfig — personal / job-seeker-specific configuration loaded from
+# config/intent.yaml.  Values from this file override the empty defaults in
+# the JobAgentConfig models so that config.yaml stays purely operational.
+# ---------------------------------------------------------------------------
+
+
+class IntentLocation(StrictModel):
+    local_area: str = ""
+    target_city: str = ""
+    latitude: float = 0.0
+    longitude: float = 0.0
+    radius_km: float = 0.0
+    languages: list[str] = Field(default_factory=list)
+
+
+class IntentCompanies(StrictModel):
+    blacklist: list[str] = Field(default_factory=list)
+    whitelist: list[str] = Field(default_factory=list)
+    known_domains: dict[str, list[str]] = Field(default_factory=dict)
+    portal_role_terms: list[str] = Field(default_factory=list)
+
+
+class IntentSearch(StrictModel):
+    search_url_templates: list[str] = Field(default_factory=list)
+    whitelist_job_portal_search_templates: list[str] = Field(default_factory=list)
+
+
+class IntentConfig(StrictModel):
+    location: IntentLocation = Field(default_factory=IntentLocation)
+    companies: IntentCompanies = Field(default_factory=IntentCompanies)
+    search: IntentSearch = Field(default_factory=IntentSearch)
+
+
 class JobAgentConfig(StrictModel):
     app: AppConfig = Field(default_factory=AppConfig)
     target: TargetConfig = Field(default_factory=TargetConfig)
@@ -760,6 +748,7 @@ class JobAgentConfig(StrictModel):
     exploration: ExplorationConfig = Field(default_factory=ExplorationConfig)
     heuristic_extraction: HeuristicExtractionConfig = Field(default_factory=HeuristicExtractionConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    intent: IntentConfig = Field(default_factory=IntentConfig)
 
 
 @dataclass(frozen=True, slots=True)
@@ -774,6 +763,7 @@ class RuntimePaths:
     profile_path: Path
     seeds_path: Path
     prompts_path: Path
+    intent_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -863,11 +853,55 @@ def load_config(path: str | os.PathLike[str] | None = None) -> LoadedConfig:
         profile_path=_resolve(project_root, config.profile.path),
         seeds_path=_resolve(project_root, config.seeds.path),
         prompts_path=_resolve(project_root, config.prompts.path),
+        intent_path=_resolve(project_root, "config/intent.yaml"),
     )
+
+    # Load and merge intent.yaml (personal / job-seeker-specific config).
+    if paths.intent_path.exists():
+        intent_text = paths.intent_path.read_text(encoding="utf-8")
+        intent_raw = yaml.safe_load(intent_text) or {}
+        intent = IntentConfig.model_validate(intent_raw)
+        _merge_intent(config, intent)
 
     profile_text = paths.profile_path.read_text(encoding="utf-8").strip() if paths.profile_path.exists() else ""
     config = _apply_profile_knowledge(config, profile_text)
     return LoadedConfig(config=config, paths=paths)
+
+
+def _merge_intent(config: JobAgentConfig, intent: IntentConfig) -> None:
+    """Merge personal intent values into the operational config.
+
+    Only non-empty intent values override the config defaults.
+    """
+    loc = intent.location
+    if loc.local_area:
+        config.target.local_area = loc.local_area
+    if loc.target_city:
+        config.location_radius.target_city = loc.target_city
+    if loc.latitude and loc.latitude != 0.0:
+        config.location_radius.latitude = loc.latitude
+    if loc.longitude and loc.longitude != 0.0:
+        config.location_radius.longitude = loc.longitude
+    if loc.radius_km and loc.radius_km > 0:
+        config.location_radius.radius_km = loc.radius_km
+    if loc.languages:
+        config.target.languages = list(loc.languages)
+
+    comp = intent.companies
+    if comp.whitelist:
+        config.companies.whitelist = list(comp.whitelist)
+    if comp.known_domains:
+        config.companies.known_domains = dict(comp.known_domains)
+    if comp.blacklist:
+        config.companies.blacklist = list(comp.blacklist)
+    if comp.portal_role_terms:
+        config.companies.portal_role_terms = list(comp.portal_role_terms)
+
+    srch = intent.search
+    if srch.search_url_templates:
+        config.exploration.search_url_templates = list(srch.search_url_templates)
+    if srch.whitelist_job_portal_search_templates:
+        config.exploration.whitelist_job_portal_search_templates = list(srch.whitelist_job_portal_search_templates)
 
 
 def ensure_data_dirs(paths: RuntimePaths) -> None:

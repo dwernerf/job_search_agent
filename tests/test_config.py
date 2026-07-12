@@ -20,11 +20,11 @@ def test_runtime_paths_resolve_relative_to_repo(sample_config_path):
 
 def test_llm_config_uses_simple_12k_context(sample_config_path):
     loaded = load_config(sample_config_path)
-    assert loaded.config.llm.base_url == "http://127.0.0.1:8080/v1"
+    assert loaded.config.llm.base_url == "http://127.0.0.1:8087/v1"
     assert loaded.config.llm.context_window_tokens == 12000
     assert loaded.config.llm.output_tokens == 5000
     assert loaded.config.llm.max_prompt_tokens == 6400
-    assert loaded.config.llm.thinking_enabled is False
+    assert loaded.config.llm.thinking_enabled is True
     assert loaded.config.llm.timeout_seconds == 400
 
 

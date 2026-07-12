@@ -16,15 +16,16 @@ app:
   user_agent: JobMatchAgent/0.1 (+local personal job search; read-only)
 
 target:
-  # Human-readable target area used in prompts and logs.
-  # The hard 30 km radius is configured under location_radius.
-  local_area: Munich, Germany
+  # Languages to understand. Language itself is not scored positively or negatively.
+  # Default is read from config/intent.yaml on startup.
+  languages: []
 
   # Keep explicitly remote-from-Germany jobs even if no office is inside the radius.
   include_remote: true
 
-  # Languages to understand. Language itself is not scored positively or negatively.
-  languages: [German, English]
+  # Human-readable target area used in prompts and logs.
+  # Default is read from config/intent.yaml on startup.
+  local_area: ""
 
 profile:
   # Single source of truth for roles, aliases, expertise, industries, and exclusions.
@@ -144,33 +145,15 @@ score_consistency:
 
 companies:
   # Drop exported jobs from these companies. Leave empty unless needed.
-  blacklist:
-    - Futrue GmbH
-    
+  # Default is read from config/intent.yaml on startup.
+  blacklist: []
 
   # Company names for focused whitelist searches.
   # The agent will derive direct career-page candidates from known_domains and
   # create company+role job-portal searches. You do not need to duplicate these
   # companies in config/seeds.txt.
-  whitelist:
-    - ZEISS
-    - TRUMPF
-    - Rohde & Schwarz
-    - HENSOLDT
-    - OSRAM
-    - Airbus Defence & Space
-    - Coherent
-    - SUSS MicroTec
-    - TOPTICA Photonics
-    - Blickfeld
-    - Marvel Fusion
-    - BMW
-    - Isar Aerospace
-    - Rheinmetall
-    - TYTAN
-    - Helsing
-    - Quantum Systems
-    - Stark
+  # Default is read from config/intent.yaml on startup.
+  whitelist: []
 
   # In whitelist_only mode, only browse/save pages that can be tied to a whitelist company.
   enforce_whitelist_in_whitelist_only: true
@@ -178,21 +161,8 @@ companies:
   # Optional company-domain metadata for direct career-page discovery.
   # This is intentionally separate from seeds.txt: whitelist_only mode can target
   # company career pages without relying on a generic search engine.
-  known_domains:
-    ZEISS: [zeiss.com]
-    TRUMPF: [trumpf.com, trumpf.wd3.myworkdayjobs.com]
-    Rohde & Schwarz: [rohde-schwarz.com]
-    HENSOLDT: [hensoldt.net, hensoldt.com]
-    OSRAM: [ams-osram.com, osram.com]
-    Airbus Defence & Space: [airbus.com]
-    Coherent: [coherent.com]
-    SUSS MicroTec: [suss.com, sussmicrotec.com]
-    TOPTICA Photonics: [toptica.com]
-    Blickfeld: [blickfeld.com]
-    Marvel Fusion: [marvelfusion.com]
-    BMW: [bmwgroup.jobs, bmw.com, bmwgroup.com]
-    Isar Aerospace: [isaraerospace.com]
-    Rheinmetall: [rheinmetall.com]
+  # Default is read from config/intent.yaml on startup.
+  known_domains: {}
 
   # Keep this false by default. Inferred domains such as airbusdefencespace.com
   # create many 404s. Edit known_domains instead when a company domain is wrong.
@@ -216,17 +186,8 @@ companies:
   max_career_page_searches_per_company: 2
 
   # Atomic terms for company+role portal searches. Do not use OR syntax here.
-  portal_role_terms:
-    - Procurement Manager
-    - Purchasing Manager
-    - Strategic Buyer
-    - Technical Buyer
-    - Supply Chain Manager
-    - Supplier Quality Manager
-    - Einkauf
-    - Strategischer Einkauf
-    - Technischer Einkäufer
-    - Lieferantenqualität
+  # Default is read from config/intent.yaml on startup.
+  portal_role_terms: []
 
   # How many of the above role terms to combine with each whitelist company.
   max_portal_role_terms_per_company: 6
@@ -254,7 +215,7 @@ exploration:
   #   whitelist_only   = whitelist company searches + seeds.txt only
   #   exploratory_only = exploratory profile searches + seeds.txt only
   # All modes write to the same jobs.csv/jobs.jsonl/jobs.sqlite files.
-  mode: both
+  mode: exploratory_only
 
   # If seeds.txt is empty, create profile-driven exploratory web-search URLs.
   # Only used when mode is both or exploratory_only.
@@ -264,17 +225,14 @@ exploration:
   # Avoid generic search engines by default because they frequently return 403
   # or CAPTCHA pages in unattended local runs.
   # Supported placeholders: {query} URL-encoded text, {query_slug} path-safe text.
-  search_url_templates:
-    - https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany
-    - https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen
-    - https://www.stellenanzeigen.de/jobs/{query_slug}/muenchen
+  # Default is read from config/intent.yaml on startup.
+  search_url_templates: []
 
   # Job-portal endpoints specifically used for whitelist company+role searches.
   # These receive simple queries like "HENSOLDT Procurement Manager", not OR-heavy
   # search-engine syntax.
-  whitelist_job_portal_search_templates:
-    - https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany
-    - https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen
+  # Default is read from config/intent.yaml on startup.
+  whitelist_job_portal_search_templates: []
 
   # For job-detail URLs, require the URL/link text to contain a profile-derived
   # target-role signal before spending an LLM call. In whitelist_only mode this
@@ -334,11 +292,8 @@ job_validation:
 
 location_radius:
   # Enforce a hard 30 km radius for non-remote jobs.
+  # target_city, latitude, longitude, and radius_km come from config/intent.yaml at runtime.
   enabled: true
-  target_city: Munich
-  latitude: 48.137154
-  longitude: 11.576124
-  radius_km: 30.0
 
   # true drops jobs outside the radius instead of only lowering their score.
   hard_drop_outside_radius: true

@@ -1,0 +1,100 @@
+# Personal / job-seeker-specific configuration for jobagent-local.
+#
+# This file contains everything that differs between job seekers.
+# Role vocabulary goes in profile.md. Operational knobs go in config.yaml.
+# If a different person wants to use this agent, they edit this file
+# and profile.md; config.yaml stays unchanged.
+
+# --- Location ---
+location:
+  # Human-readable target area used in prompts and logs.
+  local_area: "Munich, Germany"
+
+  # City name used for radius checks and exploration URL filtering.
+  target_city: "Munich"
+
+  # Coordinates for the target city (hardcoded for the 30 km radius filter).
+  latitude: 48.137154
+  longitude: 11.576124
+
+  # Hard radius in km for non-remote jobs.
+  radius_km: 30.0
+
+  # Languages to understand. Language itself is not scored positively or negatively.
+  languages: [German, English]
+
+# --- Companies ---
+companies:
+  # Drop exported jobs from these companies. Leave empty unless needed.
+  blacklist:
+    - Futrue GmbH
+
+  # Company names for focused whitelist searches.
+  # The agent will derive direct career-page candidates from known_domains and
+  # create company+role job-portal searches.
+  whitelist:
+    - ZEISS
+    - TRUMPF
+    - Rohde & Schwarz
+    - HENSOLDT
+    - OSRAM
+    - Airbus Defence & Space
+    - Coherent
+    - SUSS MicroTec
+    - TOPTICA Photonics
+    - Blickfeld
+    - Marvel Fusion
+    - BMW
+    - Isar Aerospace
+    - Rheinmetall
+    - TYTAN
+    - Helsing
+    - Quantum Systems
+    - Stark
+
+  # Company-domain metadata for direct career-page discovery.
+  # Separate from seeds.txt: whitelist_only mode targets career pages without
+  # relying on a generic search engine.
+  known_domains:
+    ZEISS: [zeiss.com]
+    TRUMPF: [trumpf.com, trumpf.wd3.myworkdayjobs.com]
+    "Rohde & Schwarz": [rohde-schwarz.com]
+    HENSOLDT: [hensoldt.net, hensoldt.com]
+    OSRAM: [ams-osram.com, osram.com]
+    "Airbus Defence & Space": [airbus.com]
+    Coherent: [coherent.com]
+    "SUSS MicroTec": [suss.com, sussmicrotec.com]
+    "TOPTICA Photonics": [toptica.com]
+    Blickfeld: [blickfeld.com]
+    "Marvel Fusion": [marvelfusion.com]
+    BMW: [bmwgroup.jobs, bmw.com, bmwgroup.com]
+    "Isar Aerospace": [isaraerospace.com]
+    Rheinmetall: [rheinmetall.com]
+
+  # Atomic terms for company+role portal searches. Do not use OR syntax here.
+  portal_role_terms:
+    - Procurement Manager
+    - Purchasing Manager
+    - Strategic Buyer
+    - Technical Buyer
+    - Supply Chain Manager
+    - Supplier Quality Manager
+    - Einkauf
+    - Strategischer Einkauf
+    - Technischer Einkäufer
+    - Lieferantenqualität
+
+# --- Search tools ---
+search:
+  # Direct search endpoints for exploratory profile searches.
+  # Avoid generic search engines by default because they frequently return 403
+  # or CAPTCHA pages in unattended local runs.
+  search_url_templates:
+    - https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany
+    - https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen
+    - https://www.stellenanzeigen.de/jobs/{query_slug}/muenchen
+
+  # Job-portal endpoints specifically used for whitelist company+role searches.
+  whitelist_job_portal_search_templates:
+    - https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany
+    - https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen
