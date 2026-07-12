@@ -636,7 +636,7 @@ class Database:
             """,
             (max(limit * 4, limit),),
         ).fetchall()
-        return [row for row in rows if self._row_allowed_for_current_output_scope(row)][:limit]
+        return rows[:limit]
 
     def top_source_summary(self, limit: int) -> str:
         sources = self.top_sources(limit)
@@ -704,20 +704,6 @@ class Database:
         )
         self.conn.commit()
 
-    def _row_allowed_for_current_output_scope(self, row: sqlite3.Row) -> bool:
-        from .company_filters import match_whitelist_company, whitelist_scope_active
-
-        if not whitelist_scope_active(self.config):
-            return True
-        return match_whitelist_company(
-            self.config,
-            row["company"],
-            row["title"],
-            row["url"],
-            row["reason"],
-            row["evidence"],
-        ) is not None
-
     def _export_rows(self) -> list[sqlite3.Row]:
         rows = self.conn.execute(
             """
@@ -726,7 +712,7 @@ class Database:
             order by fit_score desc, last_seen_at desc
             """
         ).fetchall()
-        return [row for row in rows if self._row_allowed_for_current_output_scope(row)]
+        return rows
 
     def export_csv(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

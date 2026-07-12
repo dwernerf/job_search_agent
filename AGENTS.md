@@ -2,6 +2,8 @@
 
 ## Run
 ```bash
+make install            # create venv + pip install -e '.[dev]'
+make browsers           # playwright install --with-deps chromium
 scripts/run.sh          # activate venv + run agent
 scripts/test.sh         # pytest + compileall
 make test               # same as scripts/test.sh
@@ -16,11 +18,12 @@ make test               # same as scripts/test.sh
 - `src/jobagent/scoring.py` — deterministic score guardrails (applied after LLM scoring)
 - `src/jobagent/db.py` — SQLite schema: `jobs`, `pages`, `frontier`, `source_memory`, `queries`
 - `src/jobagent/location.py` — Munich 30 km radius enforcement
-- `src/jobagent/company_filters.py` — whitelist/blacklist matching
+- `src/jobagent/company_filters.py` — blacklist matching
 
-## Config (two files)
+## Config (three files + extras)
 - `config/profile.md` — **only place to edit job-search intent** (roles, signals, exclusions, industries). The agent derives all query vocab, score guardrails, and positive-fit terms from this file.
-- `config/config.yaml` — operational settings only (LLM endpoint, crawl limits, radius, memory, logging). Default LLM: `http://127.0.0.1:8087/v1`.
+- `config/intent.yaml` — user-specific settings: blacklist company, target city/coords/radius, search templates. Overrides config.yaml defaults at runtime.
+- `config/config.yaml` — operational settings only (LLM endpoint, crawl limits, memory weights, logging, score caps). Default LLM: `http://127.0.0.1:8087/v1`.
 - `config/seeds.txt` — optional starting URLs (company career pages, job-board results).
 - `config/prompts.yaml` — generic LLM prompt templates; never add role-specific content here.
 
@@ -29,7 +32,6 @@ make test               # same as scripts/test.sh
 - `run.reset_frontier_on_start: true` (default) clears stale queue URLs each run but keeps source memory and saved jobs.
 - `job_validation.require_loaded_job_detail_page: true` — CSV rows are saved **only** from actually loaded job-detail pages. Overview/search pages contribute follow URLs only.
 - `scoring.py` applies deterministic cap/drop rules on every LLM score before saving. Never trust an LLM score without guardrails.
-- `explore.mode: both | whitelist_only | exploratory_only` controls discovery scope. `whitelist_only` enforces company-scope checks on queued URLs and saved jobs.
 - Location filter: non-remote jobs must name a city inside 30 km of Munich. Broad locations ("Germany", "Bayern") are insufficient unless the posting says Germany-remote.
 - `data/jobs.sqlite` persists all state (jobs, source memory, frontier, queries). Reset with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl`
 

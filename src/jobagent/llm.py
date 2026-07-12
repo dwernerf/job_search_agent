@@ -91,12 +91,6 @@ class LocalLLMClient:
             "language_policy": self._clip(language_policy_summary(self.config), 500),
             "location_policy": location_radius_summary(self.config),
             "location_radius_policy": location_radius_summary(self.config),
-            "company_scope_policy": (
-                "Whitelist-only mode is active. Extract and follow only postings/pages for these companies: "
-                + ", ".join(self.config.companies.whitelist)
-                if self.config.exploration.mode == "whitelist_only" and self.config.companies.whitelist
-                else "No company whitelist restriction is active for this run."
-            ),
             "multilingual_role_terms": self._clip(", ".join(multilingual_role_terms(self.config)), 700),
             "multilingual_job_terms": self._clip(", ".join(multilingual_job_terms(self.config)), 700),
             "location_aliases": self._clip(", ".join(self.config.matching.location_aliases), 400),

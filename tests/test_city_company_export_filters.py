@@ -4,7 +4,7 @@ import csv
 
 from jobagent.agent import JobAgent
 from jobagent.db import Database
-from jobagent.discover import exploration_url_allowed, company_whitelist_queries, seed_frontier
+from jobagent.discover import exploration_url_allowed, seed_frontier
 from jobagent.location import evaluate_exploration_url_location, is_location_only_title
 from jobagent.models import JobMatch, LinkCandidate, PageDecision, PageSnapshot
 from jobagent.urltools import clean_url
@@ -142,15 +142,6 @@ def test_company_blacklist_drops_matching_jobs(temp_loaded):
 def test_linkedin_job_urls_are_not_globally_blocked(temp_loaded):
     assert clean_url("https://www.linkedin.com/jobs/search/?keywords=procurement&location=Munich", None, temp_loaded.config)
     assert clean_url("https://www.linkedin.com/jobs/view/1234567890", None, temp_loaded.config)
-
-
-def test_company_whitelist_generates_focused_portal_queries(loaded_sample):
-    from jobagent.discover import company_whitelist_portal_queries
-
-    queries = company_whitelist_portal_queries(loaded_sample.config)
-    assert any(q == "ZEISS Procurement Manager" for q in queries)
-    assert any(q == "TRUMPF Procurement Manager" for q in queries)
-    assert not any(" OR " in q or "career OR" in q for q in queries)
 
 
 def test_csv_export_has_title_as_third_column(temp_loaded):

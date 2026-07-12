@@ -80,39 +80,3 @@ def test_duplicate_generated_query_requeues_previously_blocked_page_when_robots_
     db.close()
 
 
-
-def test_exploration_mode_controls_whitelist_query_seeding(temp_loaded):
-    from jobagent.discover import seed_frontier
-    from jobagent.db import Database
-
-    temp_loaded.paths.seeds_path.write_text("", encoding="utf-8")
-    temp_loaded.config.exploration.mode = "whitelist_only"
-    temp_loaded.config.exploration.seed_search_when_empty = True
-    temp_loaded.config.companies.whitelist_search_when_seeding = True
-    temp_loaded.config.companies.whitelist = ["ZEISS"]
-    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    added = seed_frontier(temp_loaded.config, db, temp_loaded.paths.seeds_path)
-    rows = db.conn.execute("select reason, discovered_from from frontier").fetchall()
-    assert added > 0
-    assert any(row["discovered_from"] == "company-direct-career" for row in rows)
-    assert any(row["discovered_from"] == "company-whitelist-portal-query" for row in rows)
-    assert all("ZEISS" in row["reason"] for row in rows)
-    db.close()
-
-
-def test_exploration_mode_can_disable_whitelist_query_seeding(temp_loaded):
-    from jobagent.discover import seed_frontier
-    from jobagent.db import Database
-
-    temp_loaded.paths.seeds_path.write_text("", encoding="utf-8")
-    temp_loaded.config.exploration.mode = "exploratory_only"
-    temp_loaded.config.exploration.seed_search_when_empty = True
-    temp_loaded.config.companies.whitelist_search_when_seeding = True
-    temp_loaded.config.companies.whitelist = ["ZEISS"]
-    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    added = seed_frontier(temp_loaded.config, db, temp_loaded.paths.seeds_path)
-    rows = db.conn.execute("select reason, discovered_from from frontier").fetchall()
-    assert added > 0
-    assert all(row["discovered_from"] == "bootstrap-query" for row in rows)
-    assert not any("ZEISS" in row["reason"] for row in rows)
-    db.close()

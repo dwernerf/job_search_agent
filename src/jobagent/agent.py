@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from .browser import BrowserSession
-from .company_filters import match_blacklist_company, match_whitelist_company, whitelist_scope_active
+from .company_filters import match_blacklist_company
 from .config import LoadedConfig, ensure_data_dirs, load_config
 from .db import Database
 from .discover import (
@@ -142,7 +142,7 @@ class JobAgent:
 
                 if not self._frontier_item_allowed_by_mode(item):
                     self.db.mark_frontier(item.url, "skipped_scope")
-                    self.reporter.action("skip_search_scope", mode=self.config.exploration.mode, url=item.url)
+                    self.reporter.action("skip_search_scope", url=item.url)
                     continue
 
                 location_verdict = evaluate_exploration_url_location(item.url, item.reason, self.config)
@@ -599,11 +599,8 @@ class JobAgent:
     def _company_blacklisted(self, job: JobMatch) -> bool:
         return match_blacklist_company(self.config, job.company, job.title, job.url, job.reason, job.evidence) is not None
 
-    def _company_whitelisted(self, job: JobMatch) -> bool:
-        return match_whitelist_company(self.config, job.company, job.title, job.url, job.reason, job.evidence) is not None
-
     def _frontier_item_allowed_by_mode(self, item) -> bool:
-        # Apply both whitelist scope and role-focus rules at pop time as a
+        # Apply role-focus rules at pop time as a
         # second line of defense. This prevents stale queue rows from older
         # versions/modes from being opened after a restart.
         return exploration_scope_allowed(item.url, item.reason, self.config)
@@ -659,9 +656,6 @@ class JobAgent:
 
         if cfg.drop_if_company_blacklisted and self._company_blacklisted(job):
             return "company_blacklist"
-
-        if whitelist_scope_active(self.config) and not self._company_whitelisted(job):
-            return "company_not_whitelisted"
 
         if cfg.require_loaded_job_detail_page:
             if not is_current_page_url:

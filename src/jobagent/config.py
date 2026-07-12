@@ -160,17 +160,6 @@ def default_broad_location_terms() -> list[str]:
     return ["Bayern", "Bavaria", "Oberbayern", "Germany", "Deutschland", "DACH", "Europe", "Europa", "EMEA"]
 
 
-def default_career_page_search_templates() -> list[str]:
-    # Empty by default because public search engines often return 403/CAPTCHA pages
-    # in unattended crawls. Add an allowed search endpoint here, for example a
-    # self-hosted SearxNG instance or a paid search API wrapper that returns HTML.
-    return []
-
-
-def default_company_domain_suffixes() -> list[str]:
-    return [".com", ".de", ".net"]
-
-
 def default_city_coordinates() -> dict[str, tuple[float, float]]:
     # Includes Munich-area towns plus common German cities that should be recognized as outside the 30 km default radius.
     return {
@@ -566,10 +555,6 @@ class MemoryConfig(StrictModel):
 
 class ExplorationConfig(StrictModel):
     enabled: bool = True
-    # both: whitelist company searches plus exploratory search/query generation.
-    # whitelist_only: only focused whitelist-company search queries plus seed URLs.
-    # exploratory_only: generic/exploratory search, no whitelist-company query seeding.
-    mode: Literal["both", "whitelist_only", "exploratory_only"] = "both"
     seed_search_when_empty: bool = True
     max_generated_queries_per_run: int = Field(default=6, ge=0)
     query_generation_every_pages: int = Field(default=12, gt=0)
@@ -581,10 +566,7 @@ class ExplorationConfig(StrictModel):
     max_follow_urls_without_llm: int = Field(default=0, ge=0)
     job_portal_domain_substrings: list[str] = Field(default_factory=lambda: ["linkedin.com/jobs", "indeed.", "stepstone.", "stellenanzeigen.", "xing.com/jobs", "monster.", "kimeta.", "jobs.de", "jobvector.", "yourfirm.", "glassdoor."])
     bootstrap_query_templates: list[str] = Field(default_factory=default_bootstrap_templates)
-    # search_url_templates and whitelist_job_portal_search_templates are filled
-    # from config/intent.yaml on startup.
     search_url_templates: list[str] = Field(default_factory=list)
-    whitelist_job_portal_search_templates: list[str] = Field(default_factory=list)
     local_area_terms: list[str] = Field(default_factory=list)
     source_discovery_terms: list[str] = Field(default_factory=list)
 
@@ -611,74 +593,9 @@ class HeuristicExtractionConfig(StrictModel):
 
 
 class CompanyFiltersConfig(StrictModel):
-    # Names in blacklist drop matched jobs. Names in whitelist generate focused
-    # company-specific search queries during seeding. Put exact company names here;
-    # direct career URLs still belong in config/seeds.txt.
-    # Defaults are filled from config/intent.yaml on startup.
+    # Names in blacklist drop matched jobs from exports. Put exact company names here;
+    # defaults are filled from config/intent.yaml on startup.
     blacklist: list[str] = Field(default_factory=list)
-    whitelist: list[str] = Field(default_factory=list)
-    whitelist_search_when_seeding: bool = True
-    enforce_whitelist_in_whitelist_only: bool = True
-    # Direct company career-page discovery is derived from these domains plus
-    # standard career paths. This keeps whitelist-only mode focused without
-    # stuffing company URLs into config/seeds.txt.
-    # Default is filled from config/intent.yaml on startup.
-    known_domains: dict[str, list[str]] = Field(default_factory=dict)
-    # false by default: inferred domains such as airbusdefencespace.com create many
-    # 404s. Keep company-domain metadata explicit and editable.
-    infer_domains_from_company_names: bool = False
-    inferred_domain_suffixes: list[str] = Field(default_factory=default_company_domain_suffixes)
-
-    # How direct company entrypoints are generated:
-    #   root_only                 = https://domain only; the crawler then follows visible career links.
-    #   root_plus_configured_paths = root plus crawler.career_path_candidates; faster but can cause 404 storms.
-    direct_career_discovery: Literal["root_only", "root_plus_configured_paths"] = "root_only"
-    max_direct_career_urls_per_company: int = Field(default=3, ge=0)
-
-    # Optional search route for finding official career pages without brute-forcing
-    # paths. Use a permitted endpoint, e.g. self-hosted SearxNG. Empty by default.
-    career_page_search_templates: list[str] = Field(default_factory=default_career_page_search_templates)
-    max_career_page_searches_per_company: int = Field(default=2, ge=0)
-
-    # Company+role job-portal searches use simple portal syntax, not Google-style
-    # OR expressions, because LinkedIn/StepStone generally treat OR/parentheses as text.
-    # Default is filled from config/intent.yaml on startup.
-    portal_role_terms: list[str] = Field(default_factory=list)
-    max_portal_role_terms_per_company: int = Field(default=6, ge=0)
-    max_search_queries_per_company: int = Field(default=0, ge=0)
-
-    @field_validator("blacklist", "whitelist", "portal_role_terms", "inferred_domain_suffixes", "career_page_search_templates")
-    @classmethod
-    def clean_company_names(cls, value: list[str]) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in value:
-            name = str(item).strip()
-            key = name.casefold()
-            if name and key not in seen:
-                seen.add(key)
-                out.append(name)
-        return out
-
-    @field_validator("known_domains")
-    @classmethod
-    def clean_known_domains(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
-        out: dict[str, list[str]] = {}
-        for company, domains in (value or {}).items():
-            cname = str(company).strip()
-            if not cname:
-                continue
-            clean_domains: list[str] = []
-            seen: set[str] = set()
-            for domain in domains or []:
-                d = str(domain).strip().lower()
-                d = d.replace("https://", "").replace("http://", "").strip("/")
-                if d and d not in seen:
-                    seen.add(d)
-                    clean_domains.append(d)
-            if clean_domains:
-                out[cname] = clean_domains
-        return out
 
 
 class LoggingConfig(StrictModel):
@@ -711,14 +628,10 @@ class IntentLocation(StrictModel):
 
 class IntentCompanies(StrictModel):
     blacklist: list[str] = Field(default_factory=list)
-    whitelist: list[str] = Field(default_factory=list)
-    known_domains: dict[str, list[str]] = Field(default_factory=dict)
-    portal_role_terms: list[str] = Field(default_factory=list)
 
 
 class IntentSearch(StrictModel):
     search_url_templates: list[str] = Field(default_factory=list)
-    whitelist_job_portal_search_templates: list[str] = Field(default_factory=list)
 
 
 class IntentConfig(StrictModel):
@@ -888,20 +801,12 @@ def _merge_intent(config: JobAgentConfig, intent: IntentConfig) -> None:
         config.target.languages = list(loc.languages)
 
     comp = intent.companies
-    if comp.whitelist:
-        config.companies.whitelist = list(comp.whitelist)
-    if comp.known_domains:
-        config.companies.known_domains = dict(comp.known_domains)
     if comp.blacklist:
         config.companies.blacklist = list(comp.blacklist)
-    if comp.portal_role_terms:
-        config.companies.portal_role_terms = list(comp.portal_role_terms)
 
     srch = intent.search
     if srch.search_url_templates:
         config.exploration.search_url_templates = list(srch.search_url_templates)
-    if srch.whitelist_job_portal_search_templates:
-        config.exploration.whitelist_job_portal_search_templates = list(srch.whitelist_job_portal_search_templates)
 
 
 def ensure_data_dirs(paths: RuntimePaths) -> None:

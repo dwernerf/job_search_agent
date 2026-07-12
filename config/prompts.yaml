@@ -8,7 +8,6 @@ page_analysis_user: |-
 
   Target area: $local_area
   Location policy: $location_policy
-  Company scope policy: $company_scope_policy
   Languages to understand: $target_languages
   Language policy: $language_policy
   Learned source memory: $memory_summary
@@ -50,7 +49,6 @@ page_analysis_user: |-
   - The loaded page must show the specific role details itself: actual job title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context.
   - If this loaded page is a search result, overview page, listing page, city page, category page, filter page, career homepage, location page, department page, or page with only job cards/snippets, return "jobs": [] even when the cards look relevant.
   - On overview/listing/search pages, use follow_urls to request promising job-detail links. Do not extract data from the overview page.
-  - If the company scope policy says whitelist-only mode is active, include only follow_urls and jobs that visibly belong to one of the listed companies.
   - Do not extract initiative/speculative/general applications, talent pools, login/application forms, or pages whose title is only a city, department, category, or navigation label.
 
   URL rules:
@@ -69,7 +67,7 @@ page_analysis_user: |-
   - 0-44: wrong role, excluded role, unclear role, wrong location, initiative/talent-pool/general application, listing page, overview page, or insufficient evidence.
   - A role excluded by the profile must score below 45 even if the company, city, or industry looks attractive.
   - A role without a clear target-role signal from the profile must score below 45.
-  - A non-remote job outside the configured target aera radius must score below 45.
+  - A non-remote job outside the configured target area radius must score below 45.
   - Broad-only locations are insufficient for non-remote jobs unless the posting explicitly supports remote work in the accepted country.
 
 query_generation_system: |-
@@ -82,7 +80,6 @@ query_generation_user: |-
 
   Target area: $local_area
   Location policy: $location_policy
-  Company scope policy: $company_scope_policy
   Languages to understand: $target_languages
   Learned source memory: $memory_summary
   Recent run summary: $run_summary
@@ -99,7 +96,6 @@ query_generation_user: |-
   Rules:
   - Produce at most 5 queries.
   - Use target-role, expertise, industry, and location terms from the profile.
-  - If whitelist-only mode is active, generate queries only for the listed companies and the candidate profile.
   - Keep queries centered on the configured target area and radius. Do not generate searches for other cities.
   - Prefer precise local queries over broad country-wide queries unless the profile accepts remote work.
   - Avoid login-only/private sources and repeated weak sources from source memory.

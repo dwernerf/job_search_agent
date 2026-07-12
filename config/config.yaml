@@ -118,8 +118,8 @@ crawler:
   # Prevent one source from consuming the whole run.
   max_pages_per_source_key: 25
 
-  # Domain-level career expansion can discover useful companies, but broad
-  # whitelist runs should not guess /careers on every linked domain. Keep this 0
+  # Domain-level career expansion can discover useful companies but broad
+  # runs should not guess /careers on every linked domain. Keep this 0
   # unless you intentionally want domain expansion.
   max_career_domain_expansions_per_page: 0
 
@@ -148,54 +148,6 @@ companies:
   # Default is read from config/intent.yaml on startup.
   blacklist: []
 
-  # Company names for focused whitelist searches.
-  # The agent will derive direct career-page candidates from known_domains and
-  # create company+role job-portal searches. You do not need to duplicate these
-  # companies in config/seeds.txt.
-  # Default is read from config/intent.yaml on startup.
-  whitelist: []
-
-  # In whitelist_only mode, only browse/save pages that can be tied to a whitelist company.
-  enforce_whitelist_in_whitelist_only: true
-
-  # Optional company-domain metadata for direct career-page discovery.
-  # This is intentionally separate from seeds.txt: whitelist_only mode can target
-  # company career pages without relying on a generic search engine.
-  # Default is read from config/intent.yaml on startup.
-  known_domains: {}
-
-  # Keep this false by default. Inferred domains such as airbusdefencespace.com
-  # create many 404s. Edit known_domains instead when a company domain is wrong.
-  infer_domains_from_company_names: false
-  inferred_domain_suffixes: [.com, .de, .net]
-
-  # Direct company entrypoint strategy:
-  #   root_only                  opens only https://domain and follows visible career links
-  #   root_plus_configured_paths also guesses /careers, /jobs, /karriere, etc.
-  # root_only avoids 404 storms from guessed career URLs.
-  direct_career_discovery: root_only
-  max_direct_career_urls_per_company: 3
-
-  # Optional search-engine route for discovering official company career pages.
-  # Leave empty unless you have a search endpoint that permits automated use,
-  # e.g. a self-hosted SearxNG instance. Placeholders: {query}, {query_slug}.
-  # Example:
-  # career_page_search_templates:
-  #   - http://localhost:8888/search?q={query}
-  career_page_search_templates: []
-  max_career_page_searches_per_company: 2
-
-  # Atomic terms for company+role portal searches. Do not use OR syntax here.
-  # Default is read from config/intent.yaml on startup.
-  portal_role_terms: []
-
-  # How many of the above role terms to combine with each whitelist company.
-  max_portal_role_terms_per_company: 6
-
-  # Optional generic web-search queries per company. Keep 0 unless you configure
-  # a search endpoint that allows automation. DuckDuckGo/Indeed often return 403.
-  max_search_queries_per_company: 0
-
 memory:
   # Stored in data/jobs.sqlite, table source_memory.
   # Higher source scores are opened earlier in future runs.
@@ -210,15 +162,7 @@ exploration:
   # true lets the agent discover URLs beyond seeds.txt.
   enabled: true
 
-  # Search mode:
-  #   both             = whitelist company searches + exploratory profile searches
-  #   whitelist_only   = whitelist company searches + seeds.txt only
-  #   exploratory_only = exploratory profile searches + seeds.txt only
-  # All modes write to the same jobs.csv/jobs.jsonl/jobs.sqlite files.
-  mode: exploratory_only
-
   # If seeds.txt is empty, create profile-driven exploratory web-search URLs.
-  # Only used when mode is both or exploratory_only.
   seed_search_when_empty: true
 
   # Direct search endpoints for exploratory profile searches.
@@ -228,16 +172,8 @@ exploration:
   # Default is read from config/intent.yaml on startup.
   search_url_templates: []
 
-  # Job-portal endpoints specifically used for whitelist company+role searches.
-  # These receive simple queries like "HENSOLDT Procurement Manager", not OR-heavy
-  # search-engine syntax.
-  # Default is read from config/intent.yaml on startup.
-  whitelist_job_portal_search_templates: []
-
   # For job-detail URLs, require the URL/link text to contain a profile-derived
-  # target-role signal before spending an LLM call. In whitelist_only mode this
-  # still applies: whitelist company alone is not enough for natural-language
-  # job slugs such as /software-developer or /werkstudent.
+  # target-role signal before spending an LLM call.
   require_role_signal_for_job_detail_urls: true
 
   # Apply the same role-signal filter to human-readable job URLs on company
@@ -252,7 +188,6 @@ exploration:
   max_follow_urls_without_llm: 0
 
   # LLM-generated exploratory queries during a run.
-  # Disabled automatically when mode is whitelist_only.
   max_generated_queries_per_run: 6
   query_generation_every_pages: 12
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from .config import JobAgentConfig
-from .company_filters import company_aliases, compact_text, match_whitelist_company, whitelist_scope_active, whitelist_scope_allows
+from .company_filters import company_aliases, compact_text
 from .db import Database
 from .models import FrontierItem, LinkCandidate, QuerySuggestion
 from .language import bootstrap_template_values
@@ -29,7 +29,7 @@ def read_seed_urls(path: Path, config: JobAgentConfig) -> list[str]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        url = clean_url(line, None, config)
+        url = clean_url(raw, None, config)
         if url:
             out.append(url)
     return list(dict.fromkeys(out))
@@ -51,139 +51,8 @@ def search_urls_for_query(query: str, config: JobAgentConfig, templates: list[st
     return list(dict.fromkeys(out))
 
 
-
-def allow_whitelist_searches(config: JobAgentConfig) -> bool:
-    return config.exploration.mode in {"both", "whitelist_only"}
-
-
 def allow_exploratory_searches(config: JobAgentConfig) -> bool:
-    return config.exploration.mode in {"both", "exploratory_only"}
-
-def company_whitelist_queries(config: JobAgentConfig) -> list[str]:
-    """Legacy generic web-search queries for company discovery.
-
-    This is intentionally disabled by default through
-    companies.max_search_queries_per_company=0 because generic search engines
-    often return 403/CAPTCHA pages in unattended local crawls. It remains
-    configurable for users who provide an allowed search API/template.
-    """
-    if not config.companies.whitelist_search_when_seeding:
-        return []
-    if not config.companies.whitelist:
-        return []
-    if config.companies.max_search_queries_per_company <= 0:
-        return []
-    roles = " ".join(config.companies.portal_role_terms[:2]) or "jobs"
-    location = config.target.local_area
-    queries: list[str] = []
-    for company in config.companies.whitelist:
-        templates = [
-            f"{company} careers Karriere Stellenangebote",
-            f"{company} {roles} {location}",
-        ]
-        queries.extend(templates[: config.companies.max_search_queries_per_company])
-    return list(dict.fromkeys(q.strip() for q in queries if q.strip()))
-
-
-def company_whitelist_portal_queries(config: JobAgentConfig) -> list[str]:
-    """Simple company+role queries for job portals.
-
-    Job portals generally do not implement Google-style OR syntax. A query like
-    '"HENSOLDT" (career OR careers OR Karriere)' is treated mostly as literal
-    text and leads to broad or zero-result pages. Use short atomic queries.
-    """
-    if not config.companies.whitelist_search_when_seeding or not config.companies.whitelist:
-        return []
-    role_terms = [term.strip() for term in config.companies.portal_role_terms if term.strip()]
-    if not role_terms:
-        role_terms = [role.strip() for role in config.target.roles if role.strip()]
-    role_terms = list(dict.fromkeys(role_terms))[: config.companies.max_portal_role_terms_per_company]
-    queries: list[str] = []
-    for company in config.companies.whitelist:
-        for term in role_terms:
-            queries.append(f"{company} {term}")
-    return queries
-
-
-def company_domain_candidates(company: str, config: JobAgentConfig) -> list[str]:
-    domains: list[str] = []
-    for key, configured in config.companies.known_domains.items():
-        if compact_text(key) == compact_text(company):
-            domains.extend(configured)
-            break
-    if config.companies.infer_domains_from_company_names:
-        for alias in company_aliases(company):
-            compact = compact_text(alias)
-            # Skip very short single-token aliases that are likely too broad.
-            if len(compact) < 4:
-                continue
-            for suffix in config.companies.inferred_domain_suffixes:
-                domains.append(compact + suffix)
-    out: list[str] = []
-    seen: set[str] = set()
-    for domain in domains:
-        d = str(domain).strip().lower()
-        d = d.replace("https://", "").replace("http://", "").strip("/")
-        if d and d not in seen:
-            seen.add(d)
-            out.append(d)
-    return out
-
-
-def company_direct_career_urls(config: JobAgentConfig) -> list[tuple[str, str]]:
-    """Return (url, company) direct company entrypoints.
-
-    Do not brute-force /career, /jobs, /karriere, etc. by default. Those
-    guesses caused many 404s. In root_only mode the crawler opens the company
-    root/ATS root and follows visible career/job links found there. Users who
-    explicitly want path probing can set companies.direct_career_discovery to
-    root_plus_configured_paths.
-    """
-    out: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    if not config.companies.whitelist_search_when_seeding:
-        return []
-
-    for company in config.companies.whitelist:
-        added = 0
-        for domain in company_domain_candidates(company, config):
-            root = f"https://{domain}".rstrip("/")
-            candidates = [root]
-            if config.companies.direct_career_discovery == "root_plus_configured_paths":
-                candidates.extend(root + "/" + path.strip().lstrip("/") for path in config.crawler.career_path_candidates)
-
-            for raw in candidates:
-                url = clean_url(raw, None, config)
-                if not url or url in seen:
-                    continue
-                if not exploration_url_allowed(url, f"{company} company entrypoint", config):
-                    continue
-                seen.add(url)
-                out.append((url, company))
-                added += 1
-                if added >= config.companies.max_direct_career_urls_per_company:
-                    break
-            if added >= config.companies.max_direct_career_urls_per_company:
-                break
-    return out
-
-
-def company_career_page_queries(config: JobAgentConfig) -> list[str]:
-    """Queries intended to find official company career pages via a configured search endpoint."""
-    if not config.companies.whitelist_search_when_seeding or not config.companies.whitelist:
-        return []
-    if not config.companies.career_page_search_templates or config.companies.max_career_page_searches_per_company <= 0:
-        return []
-
-    queries: list[str] = []
-    for company in config.companies.whitelist:
-        company_queries = [
-            f"{company} careers",
-            f"{company} Karriere",
-            f"{company} Stellenangebote",
-        ]
-        queries.extend(company_queries[: config.companies.max_career_page_searches_per_company])
-    return list(dict.fromkeys(q.strip() for q in queries if q.strip()))
+    return True
 
 
 def _is_job_portal_url(url: str, config: JobAgentConfig) -> bool:
@@ -270,20 +139,16 @@ def _exploration_role_focus_allowed(url: str, context: str, config: JobAgentConf
 
     combined = f"{url}\n{context}"
     has_role_signal = _contains_any_term(combined, config.score_consistency.target_role_terms + config.matching.preferred_terms)
-    has_whitelist_company = match_whitelist_company(config, combined) is not None
     has_avoid = _contains_any_term(combined, config.matching.avoid_terms)
 
-    # Avoid/exclusion terms from profile.md override company whitelisting. A
-    # whitelist company can still advertise internships, software roles, sales,
-    # warehouse jobs, etc.; those should not consume LLM calls unless the same
-    # URL/text also contains an explicit target-role signal.
+    # Avoid/exclusion terms from profile.md take priority over company identity.
     if config.exploration.drop_avoid_only_job_detail_urls and has_avoid and not has_role_signal:
         return False
 
     # Public job portals and human-readable company job slugs are cheap to
-    # pre-filter. Whitelist company identity alone is not enough here because it
-    # otherwise causes broad company career pages to enqueue every engineer,
-    # student, trainer, service, and warehouse posting.
+    # pre-filter. Company identity alone is not enough because it otherwise
+    # causes broad company career pages to enqueue every engineer, student,
+    # trainer, service, and warehouse posting.
     if config.exploration.require_role_signal_for_job_detail_urls and _is_job_portal_url(url, config):
         if not has_role_signal:
             return False
@@ -295,18 +160,11 @@ def _exploration_role_focus_allowed(url: str, context: str, config: JobAgentConf
     ):
         return False
 
-    if whitelist_scope_active(config) and not has_whitelist_company:
-        # In whitelist-only mode, detail pages must still carry a company signal
-        # somewhere in the URL/link context.
-        return False
-
     return True
 
 
 def exploration_scope_allowed(url: str, context: str, config: JobAgentConfig) -> bool:
-    if not whitelist_scope_allows(config, url, context):
-        return False
-    if whitelist_scope_active(config) and _unfocused_listing_url(url, context, config):
+    if _unfocused_listing_url(url, context, config):
         return False
     if not _exploration_role_focus_allowed(url, context, config):
         return False
@@ -379,7 +237,7 @@ def seed_frontier(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
         if db.enqueue(item):
             count += 1
 
-    if not seeds and config.exploration.enabled and allow_exploratory_searches(config) and config.exploration.seed_search_when_empty:
+    if not seeds and config.exploration.enabled and config.exploration.seed_search_when_empty:
         for query in bootstrap_queries(config):
             db.save_query(query, "bootstrap query from config", "bootstrap")
             for url in search_urls_for_query(query, config):
@@ -393,84 +251,6 @@ def seed_frontier(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
                     config=config,
                     db=db,
                     link_hint=1.0,
-                )
-                if db.enqueue(item):
-                    count += 1
-
-    if config.exploration.enabled and allow_whitelist_searches(config) and config.companies.whitelist_search_when_seeding:
-        # 1) Direct company entrypoints from configured company domains. In the
-        #    default root_only mode this does not guess /careers or /jobs paths.
-        #    The crawler follows visible career links from the loaded company root.
-        for url, company in company_direct_career_urls(config):
-            item = make_frontier_item(
-                url=url,
-                depth=0,
-                discovered_from="company-direct-career",
-                reason=f"whitelist company entrypoint: {company}",
-                config=config,
-                db=db,
-                link_hint=1.25,
-            )
-            if db.enqueue(item):
-                count += 1
-
-        # 2) Optional official-career-page search. This is only active when the
-        #    user configures a permitted search endpoint in
-        #    companies.career_page_search_templates.
-        career_search_depth = 1 if seeds else 0
-        for query in company_career_page_queries(config):
-            db.save_query(query, "company career-page search query from config", "company-career-search")
-            for url in search_urls_for_query(query, config, config.companies.career_page_search_templates):
-                if not exploration_url_allowed(url, query, config):
-                    continue
-                item = make_frontier_item(
-                    url=url,
-                    depth=career_search_depth,
-                    discovered_from="company-career-search-query",
-                    reason=query,
-                    config=config,
-                    db=db,
-                    link_hint=0.9,
-                )
-                if db.enqueue(item):
-                    count += 1
-
-        # 3) Focused company+role searches on job portals. Keep the query syntax
-        #    simple; no OR/parentheses.
-        portal_depth = 1 if seeds else 0
-        for query in company_whitelist_portal_queries(config):
-            db.save_query(query, "company whitelist job-portal query from config", "company-whitelist-portal")
-            for url in search_urls_for_query(query, config, config.exploration.whitelist_job_portal_search_templates):
-                if not exploration_url_allowed(url, query, config):
-                    continue
-                item = make_frontier_item(
-                    url=url,
-                    depth=portal_depth,
-                    discovered_from="company-whitelist-portal-query",
-                    reason=query,
-                    config=config,
-                    db=db,
-                    link_hint=0.75,
-                )
-                if db.enqueue(item):
-                    count += 1
-
-        # 4) Optional generic web-search query route for users who configure a
-        #    compliant search endpoint. Disabled by default.
-        whitelist_depth = 1 if seeds else 0
-        for query in company_whitelist_queries(config):
-            db.save_query(query, "company whitelist query from config", "company-whitelist")
-            for url in search_urls_for_query(query, config):
-                if not exploration_url_allowed(url, query, config):
-                    continue
-                item = make_frontier_item(
-                    url=url,
-                    depth=whitelist_depth,
-                    discovered_from="company-whitelist-query",
-                    reason=query,
-                    config=config,
-                    db=db,
-                    link_hint=0.5,
                 )
                 if db.enqueue(item):
                     count += 1
@@ -550,8 +330,6 @@ def enqueue_query_suggestions(
     config: JobAgentConfig,
     db: Database,
 ) -> int:
-    if not allow_exploratory_searches(config):
-        return 0
     count = 0
     for suggestion in suggestions[: config.exploration.max_generated_queries_per_run]:
         db.save_query(suggestion.query, suggestion.reason, "llm")
@@ -574,7 +352,7 @@ def enqueue_query_suggestions(
 
 
 def should_generate_queries(pages_done: int, generated_queries: int, config: JobAgentConfig) -> bool:
-    if not config.exploration.enabled or not allow_exploratory_searches(config):
+    if not config.exploration.enabled:
         return False
     if generated_queries >= config.exploration.max_generated_queries_per_run:
         return False

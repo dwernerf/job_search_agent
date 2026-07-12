@@ -36,6 +36,6 @@ def temp_loaded(tmp_path: Path) -> LoadedConfig:
     data["crawler"]["respect_robots_txt"] = False
     data["exploration"]["seed_search_when_empty"] = False
     data["exploration"]["query_generation_every_pages"] = 2
-    data.setdefault("companies", {})["whitelist_search_when_seeding"] = False
+
     config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return load_config(config_path)

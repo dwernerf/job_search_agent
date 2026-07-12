@@ -121,7 +121,6 @@ matching:
 
 companies:
   blacklist: []
-  whitelist: [ZEISS, TRUMPF, Rohde & Schwarz, HENSOLDT, OSRAM, BMW, Rheinmetall]
 
 heuristic_extraction:
   enabled: false
@@ -152,68 +151,13 @@ If `seeds.txt` is empty, the agent creates bootstrap search URLs from `profile.m
 ```yaml
 companies:
   blacklist: []
-  whitelist:
-    - ZEISS
-    - TRUMPF
-    - Rohde & Schwarz
-    - HENSOLDT
-    - OSRAM
-    - Airbus Defence & Space
-    - Coherent
-    - SUSS MicroTec
-    - TOPTICA Photonics
-    - Blickfeld
-    - Marvel Fusion
-    - BMW
-    - Isar Aerospace
-    - Rheinmetall
-exploration:
-  # both, whitelist_only, or exploratory_only
-  mode: both
 ```
 
-`blacklist` drops matched jobs from unwanted employers. `whitelist` drives focused discovery at run start: company root/ATS entrypoints from `known_domains`, optional official-career-page search through a configured search endpoint, and short company+role searches on configured job portals. In `whitelist_only` mode, the whitelist is a hard scope: queued URLs and saved jobs must be tied to one of the configured companies, either through the company site, a company-specific search query, or a job-portal result whose link text/URL identifies the company.
+`blacklist` drops matched jobs from unwanted employers. Leave it empty unless needed.
 
-`exploration.mode` lets you run whitelist-company discovery only, exploratory discovery only, or both. All modes write to the same `jobs.csv`, `jobs.jsonl`, and SQLite database. In `whitelist_only` mode, the CSV/JSONL export is filtered to whitelist-company jobs; old non-whitelist rows remain in SQLite so switching back to `both` does not destroy history.
-
-The default `run.reset_frontier_on_start: true` clears stale queued URLs at the start of each run, but keeps saved jobs and learned source memory. This prevents an old exploratory queue from polluting a later whitelist-only run.
+The default `run.reset_frontier_on_start: true` clears stale queued URLs at the start of each run, but keeps saved jobs and learned source memory.
 
 LinkedIn is explicitly included in the default search URL templates and is not globally blocked. Public LinkedIn job-search or job-view URLs can be used as seeds or discovered URLs. LinkedIn signup, legal, authwall, and login URLs are blocked because they waste crawl budget and cannot produce jobs. The agent still does not log in, bypass CAPTCHA, or submit forms.
-
-
-### Whitelist-only discovery strategy
-
-`whitelist_only` is intentionally different from generic exploration. It does not rely on broad web-search pages and it no longer guesses `/careers`, `/jobs`, `/karriere`, etc. for every company by default. For each company in `companies.whitelist`, the agent first opens configured company root/ATS entrypoints from `companies.known_domains` and follows visible career/job links from the page. It also creates small, atomic job-portal queries such as:
-
-```text
-HENSOLDT Procurement Manager
-BMW Strategic Buyer
-TRUMPF Supplier Quality Manager
-```
-
-It no longer generates OR-heavy queries like:
-
-```text
-"HENSOLDT" (career OR careers OR Karriere OR Stellenangebote OR Jobs)
-```
-
-Those broad queries were producing 403s, zero-result pages, or generic LinkedIn result pages that then leaked into signup/legal pages. If you have a permitted search endpoint for discovering official company career pages, configure it explicitly under `companies.career_page_search_templates`; otherwise the default avoids search-engine scraping for career-page discovery.
-
-In `whitelist_only` mode, company identity alone is no longer enough for a natural-language job-detail URL. The URL or link text must also contain a profile-derived target-role signal before the agent spends an LLM call. This prevents broad company career pages from expanding into every software, trainer, student, service, or warehouse posting at a whitelisted employer. Opaque ATS URLs can still be explored when no title is visible.
-
-In `config/config.yaml`, the relevant controls are:
-
-```yaml
-companies:
-  direct_career_discovery: root_only
-  career_page_search_templates: []
-
-crawler:
-  max_career_domain_expansions_per_page: 0
-```
-
-Set `direct_career_discovery: root_plus_configured_paths` only if you deliberately want to probe standard paths such as `/careers` and accept the resulting 404 noise.
-
 
 ## Run
 
@@ -455,7 +399,7 @@ Validation performed in the build environment:
 
 ```text
 PYTHONPATH=src pytest -q
-87 passed
+ 76 passed
 
 PYTHONPATH=src python -m compileall -q src tests
 compileall_ok
@@ -511,7 +455,3 @@ Avoid and exclude
 ```
 
 The guardrails are derived from those sections. You usually should not edit YAML lists or code for this.
-
-### Whitelist-only mode opens unrelated old URLs
-
-This should not happen with the current defaults. The agent now resets the frontier queue at startup and applies whitelist-scope checks before opening a URL. Source memory and saved jobs remain intact. If you deliberately set `run.reset_frontier_on_start: false`, old queued exploratory URLs may still exist in SQLite; switch it back to `true` or remove `data/jobs.sqlite` for a clean crawl queue.
