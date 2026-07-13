@@ -27,7 +27,7 @@ def test_bootstrap_queries_produce_search_urls():
     for q in queries:
         urls.extend(search_urls_for_query(q, loaded.config))
     assert urls, "No URLs produced from bootstrap queries"
-    assert any("google.com" in u for u in urls), "expected google.com URL"
+    assert any("brave.com" in u for u in urls), "expected brave.com URL"
 
 
 def test_bootstrap_query_urls_respond():

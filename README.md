@@ -1,16 +1,39 @@
 # jobagent-local
 
-`jobagent-local` is a read-only autonomous job-discovery agent for Ubuntu 24.x. It browses public company career pages and public job-portal result pages, extracts likely jobs, scores them against `config/profile.md` with a local OpenAI-compatible LLM server, and learns which sources are worth revisiting.
+`jobagent-local` is a read-only autonomous job-discovery agent for Ubuntu 24.x. It browses public company career pages and public job-portal result pages, extracts likely jobs, scores them against `config/profile.md` with a local OpenAI-compatible LLM server, and autonomously explores the web.
 
-The repo is designed for a local `llama.cpp` / Qwen server. It does not require command-line arguments.
+The repo is designed to work with a local llama.cpp server or similar.
+
+## Quick start
+
+```bash
+# 1. Install dependencies and browser
+make install && make browsers
+
+# 2. Edit config files for your setup
+#    - config/profile.md  → your job-search intent (roles, expertise, exclusions)
+#    - config/intent.yaml → personal overrides (target city, company whitelist/blacklist)
+#    - config/config.yaml → match llm.base_url, context_window_tokens, and other knobs to your server
+
+# 3. Ensure a local LLM server is running (check the port in config/config.yaml)
+curl http://127.0.0.1:<PORT>/v1/models
+
+# 4. Run
+scripts/run.sh
+```
+
+Outputs end up in `data/jobs.csv`, `data/jobs.jsonl`, and `data/jobs.sqlite`.
+
+**Before running:** set `context_window_tokens` in `config/config.yaml` to your server's actual context size. Tune `batch_size_for_llm` to match your context window if you exceed it.
 
 ## Core design
 
-The configuration has been simplified so that there is one source of truth for job-search intent:
+These are the main config files to tailor the agent to your needs:
 
 ```text
 config/profile.md   target roles, aliases, expertise, industries, seniority, exclusions
-config/config.yaml  operational settings only: LLM endpoint, crawl limits, search mode, radius, memory, logging
+config/intent.yaml  personal overrides: target city, coordinates, company whitelist/blacklist, languages
+config/config.yaml  operational settings: LLM endpoint, token budget, crawl limits, scoring, memory, exploration, logging
 config/prompts.yaml generic LLM instructions; no target-role-specific content
 config/seeds.txt    optional public starting URLs
 ```
@@ -27,9 +50,10 @@ seed/search URL
   -> ask the local LLM whether the loaded page itself is a job-detail page
   -> save jobs only from loaded job-detail pages, not overview/search pages
   -> use overview/search pages only to discover follow-up job-detail links
-  -> apply deterministic score/location/safety/company guardrails
-  -> skip exploration URLs that visibly point to cities outside the target radius
-  -> save matched jobs to SQLite + CSV + JSONL
+   -> apply deterministic score/location/safety/company guardrails
+   -> skip exploration URLs that visibly point to cities outside the target radius
+   -> save matched jobs to SQLite + CSV + JSONL
+   -> respect per-source page limits configured in config.yaml
   -> update persistent source memory
   -> prioritize future crawling using learned source quality
   -> optionally ask the LLM for new exploratory search queries
@@ -38,18 +62,6 @@ seed/search URL
 
 The LLM is used for judgement. Python enforces boundaries: crawl limits, depth limits, URL validation, deduplication, safety filters, radius checks, source-memory scoring, prompt-size control, and persistence.
 
-## Safety boundaries
-
-The agent is read-only. It does not log in, submit applications, bypass CAPTCHA, auto-apply, upload documents, or click submit buttons.
-
-`robots.txt` handling is controlled by:
-
-```yaml
-crawler:
-  respect_robots_txt: false
-```
-
-Set this to `true` if you want stricter crawler behavior.
 
 ## Install
 
@@ -59,17 +71,6 @@ From the repo root:
 scripts/install_ubuntu24.sh
 ```
 
-Manual equivalent:
-
-```bash
-sudo apt update
-sudo apt install -y python3-venv python3-pip sqlite3
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -U pip
-pip install -e '.[dev]'
-playwright install --with-deps chromium
-```
 
 ## Configure
 
@@ -87,51 +88,34 @@ Avoid and exclude
 
 The parser accepts ordinary bullet lists. For example, if you add a new acceptable title under `Target roles and acceptable titles`, the agent uses it for query generation, link ranking, LLM prompting, heuristic extraction, and score consistency.
 
-### 2. Edit `config/config.yaml` only for runtime behavior
+### 2. Edit `config/intent.yaml`
 
-Important settings:
+Personal overrides that differ between users. Contains:
 
-```yaml
-llm:
-  base_url: http://127.0.0.1:8080/v1
-  context_window_tokens: 12000
-  output_tokens: 5000
-  thinking_enabled: false
-  require_available_on_start: true
-  stop_run_on_connection_error: true
+- `location` — target city, coordinates, radius_km, acceptable languages
+- `companies.blacklist` — drop exported jobs from these employers
+- `companies.whitelist` — proactively search for these companies (~50% of bootstrap queries)
 
-run:
-  reset_backlog_on_start: true
-  max_pages: 80
-  max_depth: 3
-  min_delay_seconds: 0.2
-  max_delay_seconds: 0.8
+### 3. Edit `config/config.yaml` for runtime behavior
 
-location_radius:
-  target_city: Munich
-  latitude: 48.137154
-  longitude: 11.576124
-  radius_km: 30.0
-  allowed_country_url_segments: [de, de-de, de_de, deutschland, germany]
-  blocked_country_url_segments: [at, ch, cn, tw, zh_cn, zh_tw, fr, it, es, nl, pl, cz]
+Key areas to review and adjust:
 
-matching:
-  min_fit_score_to_save: 55
-  high_fit_score: 80
+- **`llm`** — endpoint, model name, `context_window_tokens` (must match your server), timeout, temperature, thinking mode, JSON response format
+- **`scoring`** — minimum export score, high-fit threshold
+- **`browser`** — headless mode
+- **`run`** — backlog reset behavior, ordering, delays, debug mode
+- **`crawler`** — per-source page limits, error retry, domain expansion, batch size for LLM
+- **`seeding`** — mode (`seeds`, `bootstrap`, or `both`), search URL templates
+- **`job_validation`** — whether to require loaded job-detail pages
+- **`memory`** — source scoring parameters
+- **`exploration`** — enable URL discovery beyond seeds.txt
+- **`logging`** — log level, console/file output
 
-companies:
-  blacklist: []
-
-heuristic_extraction:
-  enabled: false
-
-job_validation:
-  require_loaded_job_detail_page: true
-```
+**Important:** set `context_window_tokens` to your server's actual context size. If your server has a smaller context, reduce this value. Tune `max_pages_per_source_key` to match your available resources.
 
 The long internal lists that used to live in YAML have moved to Python defaults or are derived from `profile.md`. This avoids maintaining the same role/search/scoring vocabulary in multiple places.
 
-### 3. Optional: edit `config/seeds.txt`
+### 4. Optional: edit `config/seeds.txt`
 
 Add public career pages or job-board result pages. Example:
 
@@ -144,20 +128,11 @@ https://some-job-board.example/jobs/procurement/muenchen
 
 If `seeds.txt` is empty, the agent generates simple `Role+City` queries and renders them into the configured `search_url_templates`.
 
-### 4. Optional: edit company filters
+### 5. Optional: edit company filters
 
-`config/config.yaml` contains a small company filter section:
-
-```yaml
-companies:
-  blacklist: []
-```
-
-`blacklist` drops matched jobs from unwanted employers. Leave it empty unless needed.
+Company filtering is in two places: `config/intent.yaml` (blacklist + whitelist) and `config/config.yaml` (validation toggle `drop_if_company_blacklisted`). The blacklist drops matched jobs from unwanted employers. Leave it empty unless needed.
 
 The default `run.reset_backlog_on_start: true` clears stale queued URLs at the start of each run, but keeps saved jobs and learned source memory.
-
-LinkedIn is explicitly included in the default search URL templates and is not globally blocked. Public LinkedIn job-search or job-view URLs can be used as seeds or discovered URLs. LinkedIn signup, legal, authwall, and login URLs are blocked because they waste crawl budget and cannot produce jobs. The agent still does not log in, bypass CAPTCHA, or submit forms.
 
 ## Run
 
@@ -184,30 +159,7 @@ JOBAGENT_CONFIG=/absolute/path/to/config.yaml python -m jobagent
 
 The agent now prints structured progress lines at process completion points rather than interval-based summaries. Normal output uses `logging.level: info`; set it to `debug` to also see skipped URLs and finer detail.
 
-Example:
-
-```text
-STEP run_start local_area='Munich, Germany' roles='...' max_pages='80' max_depth='3'
-RESULT seed_backlog added='42' queued='42'
-STEP open_page depth='1' priority='56.42' source_key='example.com/jobs' url='https://example.com/jobs'
-RESULT page_fetched title='Search results' candidate_links='18' final_url='https://example.com/jobs'
-RESULT page_analyzed jobs='0' saved='0' high_fit='0' source_quality='55' source_notes='Overview page; follow job detail links.'
-RESULT enqueue_exploration added='7' next_depth='2' queued='48'
-RESULT page_complete saved='0' kept_jobs='0' enqueued='7' queued='48' source_quality='55' title='Search results'
-RESULT export_results reason='page' csv='data/jobs.csv' jsonl='data/jobs.jsonl'
-RESULT run_complete pages_done='80' jobs_saved_total='12' queued='130'
-RESULT run_summary pages=80 jobs_seen=12 jobs_saved=12 high_fit_jobs=4 generated_queries=6 enqueued_urls=246 blocked=0 errors=3 avg_source_quality=58.2 queued=130 elapsed_seconds=912.4 actions=411
-```
-
-Configure only this:
-
-```yaml
-logging:
-  # info or debug
-  level: info
-  console: true
-  file: true
-```
+Logging is configured in `config/config.yaml` under `logging:` (level, console, file).
 
 ## Where the agent accumulates experience
 
@@ -270,12 +222,7 @@ rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl
 
 By default, a row is saved to `jobs.csv` only when the browser has actually loaded a concrete job-detail page. Listing pages, search pages, city pages, and overview pages are used only for discovery.
 
-This is controlled by:
-
-```yaml
-job_validation:
-  require_loaded_job_detail_page: true
-```
+This is controlled by `job_validation.require_loaded_job_detail_page` in `config/config.yaml`.
 
 With this enabled, the LLM must return the loaded page's `Final URL` as the job URL. Candidate links from an overview page go into `follow_urls`; they are not saved directly as jobs. This prevents CSV links from leading back to search/result pages.
 
@@ -292,7 +239,7 @@ There are two origins:
 | `heuristic_structured` | Optional fallback from structured `schema.org/JobPosting`; disabled by default. |
 | `heuristic_link` | Optional fallback from a strong job-detail link; disabled by default. |
 
-The LLM is allowed to generate scores, but `src/jobagent/scoring.py` applies deterministic guardrails before saving. These guardrails use terms derived from `profile.md`:
+The LLM is allowed to generate scores, but deterministic guardrails in `agent.py` and `models.py` cap or drop scores before saving. These guardrails use terms derived from `profile.md`:
 
 ```text
 missing target-role signal -> cap below save threshold
@@ -306,47 +253,24 @@ weak evidence/reason       -> cap
 
 This prevents unrelated roles from being saved with medium-high scores just because the employer, city, or industry looks attractive.
 
-## Prompt files are generic
-
-`config/prompts.yaml` intentionally contains no procurement-, purchasing-, optics-, laser-, or Munich-specific role instructions. It only says how to extract jobs, score against the profile, return JSON, and generate search queries.
-
-All target-specific information comes from:
-
-```text
-config/profile.md
-config/config.yaml location/radius settings
-SQLite source memory
-current page text and candidate links
-```
-
 ## Location radius
 
-The default build enforces:
+Location filtering is configured in `config/intent.yaml` under `location:` (target city, coordinates, radius_km) and enforces:
 
-```yaml
-location_radius:
-  enabled: true
-  target_city: Munich
-  radius_km: 30.0
-  hard_drop_outside_radius: true
-  require_location_for_non_remote: true
-  allow_remote_if_country_match: true
-```
+- Non-remote jobs must name a city inside the radius
+- Broad-only locations like `Germany`, `Deutschland`, or `Bayern` are insufficient unless the posting says Germany-remote
+- Remote jobs are accepted if they can be performed from Germany
+- URL text and link text are evaluated independently from the originating search query — a Munich search-results page cannot make a `/pforzheim-...` URL look acceptable
 
-Non-remote jobs must name a city/location inside the radius. Broad-only locations such as `Germany`, `Deutschland`, `Bavaria`, or `Bayern` are treated as insufficient unless the posting clearly allows Germany-remote work.
-
-Known Munich-area towns and common outside German cities are stored as internal defaults in `src/jobagent/config.py`. You can still override `location_radius.city_coordinates` in YAML if needed, but normal users should not need to.
-
-The same radius logic is also used before opening exploration URLs. URL text and link text are evaluated independently from the originating search query, so a Munich search-results page can no longer make `/pforzheim-technischer-einkaeufer...`, `/buchloe-...`, or `/fridolfing-...` look acceptable. Unknown-location company root pages are still allowed because many career pages do not encode a city in the URL.
+Known Munich-area towns and common outside German cities are stored as internal defaults in `src/jobagent/config.py`. Normal users should not need to override them.
 
 ## LLM context window
 
-The visible token settings are deliberately simple:
+The token settings are in `config/config.yaml` under `llm:`. The two key values are:
 
-```yaml
-llm:
-  context_window_tokens: 12000
-  output_tokens: 5000
+```text
+context_window_tokens   → set this to your server's actual context size
+output_tokens           → max tokens the model is allowed to produce
 ```
 
 The script derives the internal prompt budget automatically:
@@ -397,12 +321,9 @@ The suite covers config loading, profile-derived vocabulary, URL normalization, 
 
 Validation performed in the build environment:
 
-```text
+```bash
 PYTHONPATH=src pytest -q
- 76 passed
-
 PYTHONPATH=src python -m compileall -q src tests
-compileall_ok
 ```
 
 Tests use mocked browser and LLM components. Live crawling still depends on your network, target websites, and local LLM server.
@@ -411,14 +332,7 @@ Tests use mocked browser and LLM components. Live crawling still depends on your
 
 ### `seeded_backlog=0 queued=0`
 
-The agent has no usable starting URLs and did not enqueue bootstrap search URLs. Check:
-
-```yaml
-seeding:
-  mode: both
-```
-
-Also check that `config/seeds.txt` contains active URLs. Stale backlog state is normally cleared automatically because `run.reset_backlog_on_start` defaults to `true`. For a completely clean run, remove the database and exported files:
+The agent has no usable starting URLs and did not enqueue bootstrap search URLs. Check `seeding.mode` in `config/config.yaml` — set it to `both` to use both seeds.txt and bootstrap queries. Also check that `config/seeds.txt` contains active URLs. Stale backlog state is normally cleared automatically because `run.reset_backlog_on_start` defaults to `true`. For a completely clean run, remove the database and exported files:
 
 ```bash
 rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl
@@ -426,13 +340,13 @@ rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl
 
 ### LLM connection errors
 
-Check:
+Check the endpoint in `config/config.yaml`, then verify:
 
 ```bash
-curl http://127.0.0.1:8080/v1/models
+curl <llm.base_url>/v1/models
 ```
 
-Then confirm `llm.base_url`, `llm.model`, and `llm.chat_endpoint`.
+Confirm `llm.base_url`, `llm.model`, and `llm.chat_endpoint` match your server.
 
 ### LLM page analysis fails
 

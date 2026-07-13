@@ -108,10 +108,6 @@ def render_query_url(query: str, template: str) -> str:
     return template.format(query=quote(query))
 
 
-def same_domain(left: str, right: str) -> bool:
-    return domain_from_url(left) == domain_from_url(right)
-
-
 def root_url(url: str) -> str:
     parsed = urlparse(url)
     return urlunparse((parsed.scheme, parsed.netloc, "/", "", "", ""))

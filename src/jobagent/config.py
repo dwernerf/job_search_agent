@@ -8,7 +8,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .profile_knowledge import extract_profile_knowledge, regexes_from_terms, unique_terms
+from .language import unique_terms
+from .profile_knowledge import extract_profile_knowledge
 
 
 class StrictModel(BaseModel):
@@ -304,9 +305,6 @@ class RunConfig(StrictModel):
     reset_backlog_on_start: bool = True
     min_delay_seconds: float = Field(default=0.2, ge=0)
     max_delay_seconds: float = Field(default=0.8, ge=0)
-    export_after_run: bool = True
-    export_after_each_page: bool = True
-    export_on_interrupt: bool = True
     debug_mode: bool = False
 
     @model_validator(mode="after")
@@ -518,7 +516,23 @@ def _resolve(base: Path, value: str) -> Path:
     return (base / path).resolve()
 
 
-def _apply_profile_knowledge(config: JobAgentConfig, profile_text: str) -> JobAgentConfig:
+def build_config_from_profile(config: JobAgentConfig, profile_text: str) -> JobAgentConfig:
+    """Derive operational config from profile.md and return a new config.
+
+    Assignment map (14 fields derived from profile.md):
+        target.roles                    <- target_roles (or fallback)
+        matching.preferred_terms        <- positive_terms + target_roles + config.preferred_terms
+        matching.avoid_terms            <- avoid_terms + config.avoid_terms
+        matching.location_aliases       <- config.location_aliases
+        crawler.job_link_hints          <- defaults + role_signals + search_terms[:60]
+        crawler.source_discovery_terms  <- config.source_discovery_terms + search_terms[:80]
+        exploration.source_discovery_terms <- config.source_discovery_terms + search_terms[:80]
+        exploration.local_area_terms    <- config.local_area_terms + location_terms
+        multilingual.german_role_terms  <- config.german_role_terms + German role_signals
+        multilingual.english_role_terms <- config.english_role_terms + non-German role_signals
+        multilingual.mixed_role_terms   <- config.mixed_role_terms + target_roles
+    """
+    config = config.model_copy(deep=True)
     knowledge = extract_profile_knowledge(profile_text)
 
     target_roles = unique_terms(knowledge.target_roles or config.target.roles)
@@ -574,7 +588,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> LoadedConfig:
         _merge_intent(config, intent)
 
     profile_text = paths.profile_path.read_text(encoding="utf-8").strip() if paths.profile_path.exists() else ""
-    config = _apply_profile_knowledge(config, profile_text)
+    config = build_config_from_profile(config, profile_text)
     return LoadedConfig(config=config, paths=paths)
 
 

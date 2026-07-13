@@ -140,12 +140,6 @@ class ActionReporter:
             if value is None:
                 continue
             text = str(value).replace("\n", " ").strip()
-            if key in {"url", "final_url"}:
-                text = self.display_url(text)
-            elif key == "title":
-                text = self.display_title(text)
-            elif key in {"notes", "source_notes", "reason", "error"}:
-                text = self.display_notes(text)
             cleaned.append(f"{key}={text!r}")
         return " ".join(cleaned)
 

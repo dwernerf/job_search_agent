@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from .config import JobAgentConfig
-
 
 def unique_terms(values: list[str]) -> list[str]:
     out: list[str] = []

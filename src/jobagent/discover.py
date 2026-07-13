@@ -3,10 +3,9 @@ from __future__ import annotations
 import random
 import re
 from pathlib import Path
-from urllib.parse import parse_qs, quote_plus, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .config import JobAgentConfig
-from .company_filters import compact_text
 from .db import Database
 from .models import BacklogItem, LinkCandidate
 
@@ -73,10 +72,6 @@ def _looks_like_detail_url(url: str, config: JobAgentConfig) -> bool:
         except re.error:
             continue
     return False
-
-
-def allow_exploratory_searches(config: JobAgentConfig) -> bool:
-    return True
 
 
 def seed_backlog(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
@@ -166,7 +161,3 @@ def enqueue_career_candidates(
 
 def build_run_summary(pages_done: int, jobs_saved: int, queued: int) -> str:
     return f"pages_done={pages_done}, jobs_saved={jobs_saved}, queued_pages={queued}"
-
-
-def encode_query_for_display(query: str) -> str:
-    return quote_plus(query)

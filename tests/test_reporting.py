@@ -29,18 +29,19 @@ def make_stream_logger(level: int = logging.INFO) -> tuple[logging.Logger, io.St
     return logger, stream
 
 
-def test_action_reporter_prints_structured_action_lines_and_truncates_urls(temp_loaded):
+def test_action_reporter_prints_structured_action_lines_without_truncation(temp_loaded):
     cfg = temp_loaded.config
     cfg.logging.max_url_chars = 30
     logger, stream = make_stream_logger()
     reporter = ActionReporter(cfg, logger, clock=FakeClock())
 
-    reporter.action("open_page", url="https://example.test/" + "very-long-path" * 10, depth=1)
+    long_url = "https://example.test/" + "very-long-path" * 10
+    reporter.action("open_page", url=long_url, depth=1)
 
     output = stream.getvalue()
     assert "STEP open_page" in output
     assert "depth='1'" in output
-    assert "…" in output
+    assert long_url in output
 
 
 def test_action_reporter_no_longer_emits_interval_summary(temp_loaded):

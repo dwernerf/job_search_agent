@@ -88,11 +88,6 @@ run:
   # When true, log each link's full page_context at debug level after LLM classification.
   debug_mode: true
 
-  # Export partial results while the run is still active.
-  export_after_each_page: true
-  export_after_run: true
-  export_on_interrupt: true
-
 crawler:
   # Retry pages that failed in earlier runs.
   retry_error_pages: true
@@ -108,7 +103,7 @@ crawler:
   # Number of links to send to the LLM per batch. Each link includes its own
   # fetched page_context. If the batch exceeds the context window, the last
   # link is dropped and the batch retried until it fits.
-  batch_size_for_llm: 30
+  batch_size_for_llm: 70
 
 scoring:
   # Minimum fit score (0-100) for a job to be exported/saved. Jobs below this are dropped.

@@ -18,9 +18,11 @@ def now_iso() -> str:
 
 
 class Database:
-    def __init__(self, path: Path, config: JobAgentConfig) -> None:
+    def __init__(self, path: Path, config: JobAgentConfig, csv_export_path: str | Path | None = None, jsonl_export_path: str | Path | None = None) -> None:
         self.path = path
         self.config = config
+        self.csv_export_path = csv_export_path
+        self.jsonl_export_path = jsonl_export_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
@@ -384,6 +386,13 @@ class Database:
             saved += 1
 
         self.conn.commit()
+
+        if saved > 0:
+            if self.csv_export_path:
+                self.export_csv(Path(self.csv_export_path))
+            if self.jsonl_export_path:
+                self.export_jsonl(Path(self.jsonl_export_path))
+
         return saved
 
     def top_sources(self, limit: int) -> list[Any]:
