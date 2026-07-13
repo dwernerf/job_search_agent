@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from jobagent.db import Database
-from jobagent.discover import bootstrap_queries, read_seed_urls, seed_frontier
+from jobagent.discover import bootstrap_queries, read_seed_urls, seed_backlog
 
 
 def test_bootstrap_queries_use_target_config(loaded_sample):
@@ -10,10 +10,10 @@ def test_bootstrap_queries_use_target_config(loaded_sample):
     assert any("Purchasing Manager" in q or "Procurement Manager" in q for q in queries)
 
 
-def test_seed_frontier_reads_seed_file(temp_loaded):
+def test_seed_backlog_reads_seed_file(temp_loaded):
     temp_loaded.paths.seeds_path.write_text("https://acme.test/careers\n", encoding="utf-8")
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    count = seed_frontier(temp_loaded.config, db, temp_loaded.paths.seeds_path)
+    count = seed_backlog(temp_loaded.config, db, temp_loaded.paths.seeds_path)
     assert count == 1
     assert db.queued_count() == 1
     db.close()

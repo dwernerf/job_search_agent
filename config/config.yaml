@@ -71,10 +71,15 @@ browser:
   headless: true
 
 run:
-  # Clear the crawl queue at each start. This prevents stale frontier items from
+  # Clear the backlog at each start. This prevents stale backlog items from
   # an older mode/profile run from dragging the agent into irrelevant pages.
   # It does not delete jobs or learned source memory.
-  reset_frontier_on_start: true
+  reset_backlog_on_start: true
+
+  # Backlog queue ordering: "fifo" (insertion order) or "shuffle" (random).
+  # Shuffle prevents the agent from always following the same traversal path
+  # when multiple URLs share the same insertion time (e.g. seed URLs).
+  backlog_order: shuffle
 
   # Delay between page visits. Kept below 1 second per your request.
   min_delay_seconds: 0.2
@@ -135,7 +140,7 @@ seeding:
 
   bootstrapped_search:
     # Search endpoints for bootstrapped queries.
-    # Supported placeholders: {query} URL-encoded text, {query_slug} path-safe text.
+    # Supported placeholder: {query} URL-encoded text.
     search_url_templates:
       - https://search.brave.com/search?q={query}
 

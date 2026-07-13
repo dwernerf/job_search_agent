@@ -37,14 +37,14 @@ class ActionReporter:
     }
 
     RESULT_EVENTS = {
-        "seed_frontier",
+        "seed_backlog",
         "page_fetched",
         "page_analyzed",
         "page_complete",
         "job_validation_guard",
         "score_guard_dropped",
         "export_results",
-        "frontier_empty_stop",
+        "backlog_empty_stop",
         "page_failed",
         "run_complete",
         "run_summary",

@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from .config import JobAgentConfig
 from .company_filters import compact_text
 from .db import Database
-from .models import FrontierItem, LinkCandidate
+from .models import BacklogItem, LinkCandidate
 
 from .urltools import career_candidate_urls, clean_url, render_query_url, source_key
 
@@ -79,14 +79,14 @@ def allow_exploratory_searches(config: JobAgentConfig) -> bool:
     return True
 
 
-def seed_frontier(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
+def seed_backlog(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
     count = 0
     mode = config.seeding.mode
 
     if mode in ("seeds", "both"):
         seeds = read_seed_urls(seed_path, config)
         for url in seeds:
-            item = FrontierItem(
+            item = BacklogItem(
                 url=url,
                 depth=0,
                 discovered_from="seed-file",
@@ -99,7 +99,7 @@ def seed_frontier(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
     if mode in ("bootstrap", "both") and config.exploration.enabled:
         for query in bootstrap_queries(config):
             for url in search_urls_for_query(query, config):
-                item = FrontierItem(
+                item = BacklogItem(
                     url=url,
                     depth=0,
                     discovered_from="bootstrap-query",
@@ -124,7 +124,7 @@ def enqueue_links(
         url = clean_url(link.url, source_url, config)
         if not url:
             continue
-        item = FrontierItem(
+        item = BacklogItem(
             url=url,
             depth=next_depth,
             discovered_from=source_url,

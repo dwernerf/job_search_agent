@@ -295,7 +295,13 @@ class BrowserConfig(StrictModel):
 
 
 class RunConfig(StrictModel):
-    reset_frontier_on_start: bool = True
+    # Ordering of the backlog queue when popping the next item to visit.
+    # "fifo"  – first-in-first-out (insertion order, oldest first).
+    # "shuffle" – random order via SQLite's ORDER BY random().
+    # Shuffle prevents the agent from always following the same traversal path
+    # when multiple URLs share the same insertion time (e.g. seeds).
+    backlog_order: Literal["fifo", "shuffle"] = "fifo"
+    reset_backlog_on_start: bool = True
     min_delay_seconds: float = Field(default=0.2, ge=0)
     max_delay_seconds: float = Field(default=0.8, ge=0)
     export_after_run: bool = True
@@ -377,10 +383,6 @@ class MemoryConfig(StrictModel):
     penalty_error: float = -5.0
     penalty_bad_source_quality: float = -2.5
     no_job_streak_penalty_after: int = Field(default=4, ge=0)
-    priority_weight_memory: float = 1.0
-    priority_weight_depth: float = 7.0
-    priority_weight_hint: float = 2.5
-    priority_random_jitter: float = Field(default=2.0, ge=0)
     top_sources_in_prompt: int = Field(default=8, ge=0)
     bad_sources_in_prompt: int = Field(default=8, ge=0)
     recent_jobs_in_prompt: int = Field(default=8, ge=0)

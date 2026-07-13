@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import JobAgentConfig
-from .models import FrontierItem, JobMatch
+from .models import BacklogItem, JobMatch
 from .urltools import domain_from_url, source_key
 
 
@@ -63,10 +63,9 @@ class Database:
                 last_seen_at text not null
             );
 
-            create table if not exists frontier (
+            create table if not exists backlog (
                 url text primary key,
                 depth integer not null,
-                priority real not null default 0.0,
                 discovered_from text not null,
                 reason text not null,
                 source_key text not null,
@@ -152,28 +151,28 @@ class Database:
             return True
         return False
 
-    def clear_frontier_history(self) -> int:
+    def clear_backlog_history(self) -> int:
         before = self.conn.total_changes
-        self.conn.execute("delete from frontier where status != 'queued'")
+        self.conn.execute("delete from backlog where status != 'queued'")
         self.conn.commit()
         return self.conn.total_changes - before
 
-    def reset_frontier(self) -> int:
+    def reset_backlog(self) -> int:
         before = self.conn.total_changes
-        self.conn.execute("delete from frontier")
+        self.conn.execute("delete from backlog")
         self.conn.commit()
         return self.conn.total_changes - before
 
-    def _make_frontier_item(
+    def _make_backlog_item(
         self,
         url: str,
         depth: int,
         discovered_from: str,
         reason: str,
         config: JobAgentConfig,
-    ) -> FrontierItem:
+    ) -> BacklogItem:
         skey = source_key(url, config)
-        return FrontierItem(
+        return BacklogItem(
             url=url,
             depth=depth,
             discovered_from=discovered_from,
@@ -181,7 +180,7 @@ class Database:
             source_key=skey,
         )
 
-    def enqueue(self, item: FrontierItem) -> bool:
+    def enqueue(self, item: BacklogItem) -> bool:
         revisiting = self.can_revisit(item.url)
         if self.was_visited(item.url) and not revisiting:
             return False
@@ -192,7 +191,7 @@ class Database:
 
         timestamp = now_iso()
         existing = self.conn.execute(
-            "select status from frontier where url = ?",
+            "select status from backlog where url = ?",
             (item.url,),
         ).fetchone()
 
@@ -200,9 +199,8 @@ class Database:
         if existing is not None and existing["status"] != "queued" and (revisiting or self.page_status(item.url) is None):
             self.conn.execute(
                 """
-                update frontier set
+                update backlog set
                     depth = ?,
-                    priority = 0.0,
                     discovered_from = ?,
                     reason = ?,
                     source_key = ?,
@@ -224,15 +222,15 @@ class Database:
         else:
             self.conn.execute(
                 """
-                insert into frontier(
-                    url, depth, priority, discovered_from, reason, source_key,
+                insert into backlog(
+                    url, depth, discovered_from, reason, source_key,
                     status, queued_at, updated_at
-                ) values (?, ?, 0.0, ?, ?, ?, 'queued', ?, ?)
+                ) values (?, ?, ?, ?, ?, 'queued', ?, ?)
                 on conflict(url) do update set
-                    depth = min(frontier.depth, excluded.depth),
+                    depth = min(backlog.depth, excluded.depth),
                     reason = excluded.reason,
                     updated_at = excluded.updated_at
-                where frontier.status = 'queued'
+                where backlog.status = 'queued'
                 """,
                 (
                     item.url,
@@ -247,24 +245,28 @@ class Database:
         self.conn.commit()
         return self.conn.total_changes > before
 
-    def pop_frontier(self) -> FrontierItem | None:
+    def pop_backlog(self) -> BacklogItem | None:
         row = self.conn.execute(
             """
-            select * from frontier
+            select * from backlog
             where status = 'queued'
-            order by queued_at asc
+            {order_clause}
             limit 1
-            """
+            """.format(
+                order_clause="ORDER BY queued_at ASC"
+                if self.config.run.backlog_order == "fifo"
+                else "ORDER BY random()"
+            )
         ).fetchone()
         if row is None:
             return None
 
         self.conn.execute(
-            "update frontier set status = 'active', updated_at = ? where url = ?",
+            "update backlog set status = 'active', updated_at = ? where url = ?",
             (now_iso(), row["url"]),
         )
         self.conn.commit()
-        return FrontierItem(
+        return BacklogItem(
             url=row["url"],
             depth=int(row["depth"]),
             discovered_from=row["discovered_from"],
@@ -272,16 +274,16 @@ class Database:
             source_key=row["source_key"],
         )
 
-    def mark_frontier(self, url: str, status: str) -> None:
+    def mark_backlog(self, url: str, status: str) -> None:
         self.conn.execute(
-            "update frontier set status = ?, updated_at = ? where url = ?",
+            "update backlog set status = ?, updated_at = ? where url = ?",
             (status, now_iso(), url),
         )
         self.conn.commit()
 
     def queued_count(self) -> int:
         row = self.conn.execute(
-            "select count(*) as n from frontier where status = 'queued'"
+            "select count(*) as n from backlog where status = 'queued'"
         ).fetchone()
         return int(row["n"])
 

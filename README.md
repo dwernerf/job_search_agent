@@ -101,7 +101,7 @@ llm:
   stop_run_on_connection_error: true
 
 run:
-  reset_frontier_on_start: true
+  reset_backlog_on_start: true
   max_pages: 80
   max_depth: 3
   min_delay_seconds: 0.2
@@ -155,7 +155,7 @@ companies:
 
 `blacklist` drops matched jobs from unwanted employers. Leave it empty unless needed.
 
-The default `run.reset_frontier_on_start: true` clears stale queued URLs at the start of each run, but keeps saved jobs and learned source memory.
+The default `run.reset_backlog_on_start: true` clears stale queued URLs at the start of each run, but keeps saved jobs and learned source memory.
 
 LinkedIn is explicitly included in the default search URL templates and is not globally blocked. Public LinkedIn job-search or job-view URLs can be used as seeds or discovered URLs. LinkedIn signup, legal, authwall, and login URLs are blocked because they waste crawl budget and cannot produce jobs. The agent still does not log in, bypass CAPTCHA, or submit forms.
 
@@ -188,7 +188,7 @@ Example:
 
 ```text
 STEP run_start local_area='Munich, Germany' roles='...' max_pages='80' max_depth='3'
-RESULT seed_frontier added='42' queued='42'
+RESULT seed_backlog added='42' queued='42'
 STEP open_page depth='1' priority='56.42' source_key='example.com/jobs' url='https://example.com/jobs'
 RESULT page_fetched title='Search results' candidate_links='18' final_url='https://example.com/jobs'
 RESULT page_analyzed jobs='0' saved='0' high_fit='0' source_quality='55' source_notes='Overview page; follow job detail links.'
@@ -218,7 +218,7 @@ Experience is accumulated in `data/jobs.sqlite`. The most important tables are:
 | `source_memory` | Persistent quality score per source, usually `domain/path-prefix`. This is the main learned memory. |
 | `pages` | Every visited page, final URL, status, title, source key, and how many jobs it produced. |
 | `jobs` | Saved jobs and their final calibrated score. Exported to CSV/JSONL. |
-| `frontier` | Queue of URLs to visit, with priority and discovery reason. |
+| `backlog`    | Queue of URLs to visit, and discovery reason. |
 | `queries` | Bootstrap and LLM-generated search queries, reuse count, and metadata. |
 | `events` | Optional structured events. |
 
@@ -366,7 +366,7 @@ For Qwen thinking models, `thinking_enabled: true` may improve judgement on ambi
 ## Outputs
 
 ```text
-data/jobs.sqlite   full state: jobs, pages, frontier, queries, source memory
+data/jobs.sqlite   full state: jobs, pages, backlog, queries, source memory
 data/jobs.csv      spreadsheet-friendly results; `title` is the third column
 data/jobs.jsonl    machine-readable results
 data/jobagent.log  run log
@@ -393,7 +393,7 @@ Run:
 scripts/test.sh
 ```
 
-The suite covers config loading, profile-derived vocabulary, URL normalization, safety filtering, multilingual link ranking, LLM JSON parsing, SQLite memory, frontier seeding, follow-link exploration, heuristic fallback extraction, query generation, Munich radius filtering, job validation, prompt budgeting, structured logging, and score guardrails.
+The suite covers config loading, profile-derived vocabulary, URL normalization, safety filtering, multilingual link ranking, LLM JSON parsing, SQLite memory, backlog seeding, follow-link exploration, heuristic fallback extraction, query generation, Munich radius filtering, job validation, prompt budgeting, structured logging, and score guardrails.
 
 Validation performed in the build environment:
 
@@ -409,7 +409,7 @@ Tests use mocked browser and LLM components. Live crawling still depends on your
 
 ## Troubleshooting
 
-### `seeded_frontier=0 queued=0`
+### `seeded_backlog=0 queued=0`
 
 The agent has no usable starting URLs and did not enqueue bootstrap search URLs. Check:
 
@@ -418,7 +418,7 @@ seeding:
   mode: both
 ```
 
-Also check that `config/seeds.txt` contains active URLs. Stale frontier state is normally cleared automatically because `run.reset_frontier_on_start` defaults to `true`. For a completely clean run, remove the database and exported files:
+Also check that `config/seeds.txt` contains active URLs. Stale backlog state is normally cleared automatically because `run.reset_backlog_on_start` defaults to `true`. For a completely clean run, remove the database and exported files:
 
 ```bash
 rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl

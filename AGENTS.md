@@ -13,7 +13,7 @@ Single-process Python app. Entry: `src/jobagent/agent.py:main()` → `JobAgent.r
 
 Key modules (all in `src/jobagent/`):
 - `config.py` — Pydantic models + YAML loading. `load_config()` merges `config.yaml` defaults with `config/intent.yaml` personal overrides.
-- `discover.py` — frontier seeding from seeds.txt/profile, URL enqueue, exploration scope filtering.
+- `discover.py` — backlog seeding from seeds.txt/profile, URL enqueue, exploration scope filtering.
 - `db.py` — SQLite persistence. `export_csv`/`export_jsonl` export all rows unfiltered.
 - `scoring.py` — deterministic cap/drop guardrails applied **after** LLM scoring. Never trust raw LLM scores.
 - `company_filters.py` — blacklist matching only.
@@ -38,8 +38,8 @@ Key modules (all in `src/jobagent/`):
 - `job_validation.require_loaded_job_detail_page: true` — CSV/JSONL rows are saved **only** from actually loaded job-detail pages. Overview/search pages contribute follow URLs only.
 - `scoring.py` applies deterministic cap/drop rules on every LLM score before saving.
 - Location filter defaults to 30 km around Munich (48.137154, 11.576124). Non-remote jobs must name a city inside the radius. Broad locations ("Germany", "Bayern") are insufficient unless the posting says Germany-remote.
-- `data/jobs.sqlite` persists all state (jobs, pages, source memory, frontier, queries). Reset with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl`
-- `run.reset_frontier_on_start: true` (default) clears stale queue URLs each run but keeps source memory and saved jobs.
+- `data/jobs.sqlite` persists all state (jobs, pages, source memory, backlog, queries). Reset with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl`
+- `run.reset_backlog_on_start: true` (default) clears stale queue URLs each run but keeps source memory and saved jobs.
 - Config path override: `JOBAGENT_CONFIG=/abs/path/to/config.yaml python -m jobagent`
 
 ## Tests

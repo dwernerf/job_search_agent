@@ -13,12 +13,12 @@ from .db import Database
 from .discover import (
     build_run_summary,
     enqueue_career_candidates,
-    seed_frontier,
+    seed_backlog,
 )
 from .extract import compact_text, page_decision_from_dict
 from .llm import ContextWindowExceeded, LLMResponseError, LocalLLMClient
 from .logging_utils import setup_logging
-from .models import JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot
+from .models import BacklogItem, JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot
 from .prompts import PromptBook
 from .reporting import ActionReporter
 from .urltools import clean_url, denied_by_safety, domain_from_url, source_key
@@ -86,32 +86,32 @@ class JobAgent:
                 return 2
             self.reporter.action("llm_available", base_url=self.config.llm.base_url)
 
-        if self.config.run.reset_frontier_on_start:
-            cleared = self.db.reset_frontier()
-            self.reporter.action("reset_frontier", cleared=cleared)
-        seeded = seed_frontier(self.config, self.db, self.paths.seeds_path)
-        self.logger.info("seeded_frontier=%s queued=%s", seeded, self.db.queued_count())
-        self.reporter.action("seed_frontier", added=seeded, queued=self.db.queued_count())
+        if self.config.run.reset_backlog_on_start:
+            cleared = self.db.reset_backlog()
+            self.reporter.action("reset_backlog", cleared=cleared)
+        seeded = seed_backlog(self.config, self.db, self.paths.seeds_path)
+        self.logger.info("seeded_backlog=%s queued=%s", seeded, self.db.queued_count())
+        self.reporter.action("seed_backlog", added=seeded, queued=self.db.queued_count())
 
         jobs_saved_total = 0
 
         with self.browser_factory() as browser:
             while True:
-                item = self.db.pop_frontier()
+                item = self.db.pop_backlog()
 
                 if item is None:
-                    self.reporter.action("frontier_empty_stop", pages_done=self._pages_done_count(), jobs_saved=jobs_saved_total)
-                    self.logger.info("frontier_empty jobs_saved=%s", jobs_saved_total)
+                    self.reporter.action("backlog_empty_stop", pages_done=self._pages_done_count(), jobs_saved=jobs_saved_total)
+                    self.logger.info("backlog_empty jobs_saved=%s", jobs_saved_total)
                     break
 
                 if self.db.was_visited(item.url):
-                    self.db.mark_frontier(item.url, "skipped_visited")
+                    self.db.mark_backlog(item.url, "skipped_visited")
                     self.reporter.action("skip_visited", url=item.url)
                     continue
 
                 source_limit = self.config.crawler.max_pages_per_source_key
                 if self.db.source_visit_count(item.source_key) >= source_limit:
-                    self.db.mark_frontier(item.url, "skipped_source_limit")
+                    self.db.mark_backlog(item.url, "skipped_source_limit")
                     self.reporter.action("skip_source_limit", source_key=item.source_key, url=item.url)
                     continue
 
@@ -237,14 +237,14 @@ class JobAgent:
                                     discovered_from=c.url,
                                 )
                             elif c.type == "explore":
-                                frontier_item = self.db._make_frontier_item(
+                                backlog_item = self.db._make_backlog_item(
                                     url=c.url,
                                     depth=next_depth,
                                     discovered_from=item.url,
                                     reason=f"LLM explore (type=explore)",
                                     config=self.config,
                                 )
-                                if self.db.enqueue(frontier_item):
+                                if self.db.enqueue(backlog_item):
                                     enqueued += 1
 
                             # Info-level log: url + type + fit
@@ -309,7 +309,7 @@ class JobAgent:
                             expanded_domains.add(domain)
                             enqueued += enqueue_career_candidates(link.url, snapshot.final_url, next_depth, self.config, self.db)
 
-                    self.db.mark_frontier(item.url, "done")
+                    self.db.mark_backlog(item.url, "done")
                     self.reporter.record_page(
                         status="ok",
                         jobs_seen=last_filtered_count,
@@ -349,7 +349,7 @@ class JobAgent:
                         source_quality=0,
                         discovered_from=item.discovered_from,
                     )
-                    self.db.mark_frontier(item.url, "error")
+                    self.db.mark_backlog(item.url, "error")
                     self.reporter.action("page_failed", status=page_status, url=item.url, reason=str(exc)[:500])
                     self.reporter.record_page(status=page_status, queued=self.db.queued_count())
                     self._checkpoint_export("error")
@@ -368,8 +368,8 @@ class JobAgent:
         return 0
 
     def _pages_done_count(self) -> int:
-        """Count completed (non-queued) frontier items."""
-        return self.db.count_rows("frontier") - self.db.queued_count()
+        """Count completed (non-queued) backlog items."""
+        return self.db.count_rows("backlog") - self.db.queued_count()
 
     def _llm_health_check(self) -> tuple[bool, str]:
         health = getattr(self.llm_client, "health_check", None)

@@ -55,7 +55,7 @@ class PageDecision:
 
 
 @dataclass(slots=True)
-class FrontierItem:
+class BacklogItem:
     url: str
     depth: int
     discovered_from: str = ""
