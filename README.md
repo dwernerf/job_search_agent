@@ -142,7 +142,7 @@ https://boards.greenhouse.io/some-company
 https://some-job-board.example/jobs/procurement/muenchen
 ```
 
-If `seeds.txt` is empty, the agent creates bootstrap search URLs from `profile.md` and `config/config.yaml`.
+If `seeds.txt` is empty, the agent generates simple `Role+City` queries and renders them into the configured `search_url_templates`.
 
 ### 4. Optional: edit company filters
 
@@ -414,8 +414,8 @@ Tests use mocked browser and LLM components. Live crawling still depends on your
 The agent has no usable starting URLs and did not enqueue bootstrap search URLs. Check:
 
 ```yaml
-exploration:
-  seeding_mode: both
+seeding:
+  mode: both
 ```
 
 Also check that `config/seeds.txt` contains active URLs. Stale frontier state is normally cleared automatically because `run.reset_frontier_on_start` defaults to `true`. For a completely clean run, remove the database and exported files:

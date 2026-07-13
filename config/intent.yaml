@@ -8,7 +8,7 @@
 # --- Location ---
 location:
   # Human-readable target area used in prompts and logs.
-  local_area: "Munich, Germany"
+  local_area: "Munich, Bavaria, Germany"
 
   # City name used for radius checks and exploration URL filtering.
   target_city: "Munich"
@@ -28,9 +28,25 @@ companies:
   # Drop exported jobs from these companies. Leave empty unless needed.
   blacklist:
     - Futrue GmbH
+  # Companies to proactively search for. Randomly injected into ~50% of bootstrap queries.
+  whitelist:
+    - ZEISS
+    - TRUMPF
+    - Rohde & Schwarz
+    - HENSOLDT
+    - OSRAM
+    - Airbus Defence & Space
+    - Coherent
+    - SUSS MicroTec
+    - TOPTICA Photonics
+    - Blickfeld
+    - Marvel Fusion
+    - BMW
+    - Isar Aerospace
+    - Rheinmetall
+    - TYTAN
+    - Helsing
+    - Quantum Systems
+    - Stark
+    - KNDS
 
-# --- Search tools ---
-search:
-  # Direct search endpoints for bootstrapped searches.
-  search_url_templates:
-    - https://www.google.com/search?q={query}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jobagent.extract import compact_text, page_decision_from_dict, parse_json_object, rank_candidate_links
-from jobagent.models import LinkCandidate, PageSnapshot
+from jobagent.extract import compact_text, page_decision_from_dict, parse_json_object
+from jobagent.models import PageSnapshot
 
 
 def test_parse_json_object_strips_thinking_and_fences():
@@ -36,28 +36,6 @@ def test_page_decision_parses_score_raw():
     assert len(decision.link_classifications) == 2
     assert decision.link_classifications[0].type == "job_listing"
     assert decision.link_classifications[0].url == ""
-
-
-def test_rank_candidate_links_filters_login_and_pdf(loaded_sample):
-    cfg = loaded_sample.config
-    snapshot = PageSnapshot(
-        url="https://acme.test",
-        final_url="https://acme.test",
-        title="Acme",
-        text="",
-        links=[
-            LinkCandidate(text="Careers", url="/careers"),
-            LinkCandidate(text="Login", url="/login"),
-            LinkCandidate(text="PDF", url="/brochure.pdf"),
-            LinkCandidate(text="About", url="/about"),
-        ],
-    )
-    ranked = rank_candidate_links(snapshot, cfg)
-    urls = [x.url for x in ranked]
-    assert "https://acme.test/careers" in urls
-    assert "https://acme.test/about" in urls
-    assert "https://acme.test/login" not in urls
-    assert "https://acme.test/brochure.pdf" not in urls
 
 
 def test_compact_text_keeps_relevant_lines(loaded_sample):

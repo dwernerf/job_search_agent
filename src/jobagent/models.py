@@ -8,17 +8,6 @@ from typing import Any, Literal
 class LinkCandidate:
     text: str
     url: str
-    score: float = 0.0
-    reason: str = ""
-    index: int = 0
-
-    def to_prompt_dict(self) -> dict[str, Any]:
-        return {
-            "text": self.text,
-            "url": self.url,
-            "score": round(self.score, 2),
-            "reason": self.reason,
-        }
 
 
 @dataclass(slots=True)

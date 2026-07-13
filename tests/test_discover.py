@@ -25,11 +25,12 @@ def test_read_seed_urls_ignores_comments(temp_loaded):
     assert urls == ["https://acme.test/jobs"]
 
 
-def test_default_seed_file_has_active_munich_sources(loaded_sample):
+def test_seeds_file_has_minimum_entries(loaded_sample):
+    """The default seeds.txt must be a well-formed, non-empty list of https URLs."""
     urls = read_seed_urls(loaded_sample.paths.seeds_path, loaded_sample.config)
-    assert len(urls) >= 8
-    assert any("stepstone.de/jobs/procurement-manager" in url for url in urls)
-    assert any("jobs.personio.de" in url or "join.com/companies" in url for url in urls)
+    assert len(urls) >= 8, "seeds.txt must have at least 8 entries"
+    assert all(u.startswith("https://") for u in urls), "all seeds must use https"
+    assert len(urls) == len(set(urls)), "seeds must be deduplicated"
 
 
 

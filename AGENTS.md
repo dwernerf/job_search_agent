@@ -25,10 +25,13 @@ Key modules (all in `src/jobagent/`):
 
 ## Config (never edit profile content in YAML)
 - `config/profile.md` — **single source of truth** for job-search intent. Roles, signals, expertise, exclusions, industries. All query vocabulary, score guardrails, and positive-fit terms derived from this file.
-- `config/intent.yaml` — personal overrides: blacklist, target city/coords/radius, search URL templates. Overrides `config.yaml` defaults at runtime.
-- `config/config.yaml` — operational knobs only. Defaults overridden by `config/intent.yaml`.
+- `config/intent.yaml` — personal overrides: blacklist, target city/coords/radius, company whitelist. Values are read directly from `IntentConfig` — **never** merged into `config.yaml` fields.
+- `config/config.yaml` — operational knobs and defaults.
 - `config/prompts.yaml` — **generic** LLM instructions. Never add role-specific content here.
 - `config/seeds.txt` — optional starting URLs.
+
+### Config file boundaries (never cross them)
+- `intent.yaml` and `config.yaml` must not share parameter names. No YAML merge overwrites.
 
 ## Key operational facts
 - **LLM must be running first.** The agent checks `llm.base_url + /models` on startup; if unavailable it stops with `llm_unavailable_stop` rather than crawling blindly.

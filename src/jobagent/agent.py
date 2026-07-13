@@ -15,7 +15,7 @@ from .discover import (
     enqueue_career_candidates,
     seed_frontier,
 )
-from .extract import compact_text, rank_candidate_links, page_decision_from_dict
+from .extract import compact_text, page_decision_from_dict
 from .llm import ContextWindowExceeded, LLMResponseError, LocalLLMClient
 from .logging_utils import setup_logging
 from .models import JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot
@@ -126,14 +126,14 @@ class JobAgent:
                     url=item.url,
                 )
                 page_status = "ok"
-                snapshot = PageSnapshot(url=item.url, final_url=item.url, title="", text="", links=[])
+                snapshot = PageSnapshot(url=item.url, final_url=item.url, title="", text="")
                 source_quality = 0
                 source_notes = ""
 
                 try:
                     snapshot = browser.fetch(item.url)
                     final_url = snapshot.final_url or snapshot.url
-                    candidate_links = rank_candidate_links(snapshot, self.config)
+                    candidate_links = snapshot.links if snapshot.links else []
                     self.reporter.action(
                         "page_fetched",
                         title=snapshot.title,
@@ -201,6 +201,7 @@ class JobAgent:
                         # The LLM prompt (prompts.yaml:58) tells the model to omit URLs.
                         # Inject them from links_with_context using the classification index.
                         ctx_by_index = {int(item["index"]): item["url"] for item in links_with_context}
+                        ctx_by_link_index = {item["index"]: item for item in links_with_context}
                         for c in classification.link_classifications:
                             if not c.url and c.index in ctx_by_index:
                                 c.url = ctx_by_index[c.index]
@@ -254,19 +255,23 @@ class JobAgent:
                                 c.fit_score,
                             )
 
-                        # Debug-level log: page_context preview
+                        # Pre-classification debug: count and full page_context per link
+                        self.logger.info("page %d: %d links from url=%s", item.depth, len(links_with_context), item.url)
                         if self.config.run.debug_mode:
                             for lc in links_with_context:
-                                preview = (lc["page_context"] or "")[:500]
-                                self.logger.debug("link %d url=%s context_preview=%s", lc["index"], lc["url"][:120], preview[:200])
+                                self.logger.debug("--- link %s: %s ---", lc["index"], lc["url"])
+                                self.logger.debug("%s", lc.get("page_context") or "")
+                                self.logger.debug("--- end link %s ---", lc["index"])
 
                         # Debug-level log: target page full text and LLM reasoning per link
                         if self.config.run.debug_mode:
                             self.logger.debug("=== target page: %s (url=%s) ===\n%s\n=== end target page ===",
                                               snapshot.title[:120], item.url, snapshot.text[:5000])
                             for c in classification.link_classifications:
-                                self.logger.debug("classify index=%d url=%s type=%s fit=%d reason=%s",
-                                                  c.index, c.url[:120], c.type, c.fit_score, (c.reason or "")[:300])
+                                lc = ctx_by_link_index.get(str(c.index))
+                                page_ctx = (lc.get("page_context") or "") if lc else ""
+                                self.logger.debug("classify index=%d url=%s type=%s fit=%d reason=%s\n--- page_context ---\n%s\n--- end page_context ---",
+                                                  c.index, c.url, c.type, c.fit_score, (c.reason or ""), page_ctx)
 
                     jobs_saved_total += saved
                     self.reporter.action(

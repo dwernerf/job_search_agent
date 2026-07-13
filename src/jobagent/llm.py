@@ -10,7 +10,7 @@ import requests
 from .config import JobAgentConfig
 from .extract import compact_text, page_decision_from_dict, parse_json_object
 from .language import language_policy_summary, multilingual_job_terms, multilingual_role_terms
-from .models import LinkCandidate, PageDecision, PageSnapshot
+from .models import PageDecision, PageSnapshot
 from .prompts import PromptBook
 
 
@@ -71,7 +71,6 @@ class LocalLLMClient:
     def _links_json_for_prompt(self, links_or_context: list[dict[str, str]]) -> str:
         items: list[dict[str, Any]] = []
         for item in links_or_context:
-            # Accept both dict format (from agent.py) and LinkCandidate (from tests)
             if isinstance(item, dict):
                 entry = {
                     "index": item.get("index", 0),
@@ -80,12 +79,11 @@ class LocalLLMClient:
                     "page_context": (item.get("page_context") or "")[:8000],
                 }
             else:
-                # LinkCandidate fallback
                 entry = {
                     "index": getattr(item, "index", 0),
                     "text": getattr(item, "text", "") or "",
                     "url": getattr(item, "url", "") or "",
-                    "page_context": (getattr(item, "page_context", "") or "")[:8000],
+                    "page_context": "",
                 }
             items.append(entry)
         return json.dumps(items, ensure_ascii=False)

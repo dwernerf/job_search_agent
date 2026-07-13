@@ -19,11 +19,13 @@ def test_runtime_paths_resolve_relative_to_repo(sample_config_path):
 
 
 def test_llm_config_uses_large_context_window(sample_config_path):
+    import yaml
     loaded = load_config(sample_config_path)
-    assert loaded.config.llm.base_url == "http://127.0.0.1:8087/v1"
-    assert loaded.config.llm.context_window_tokens == 150000
+    raw = yaml.safe_load(sample_config_path.read_text())
+    assert loaded.config.llm.base_url == raw["llm"]["base_url"]
+    assert loaded.config.llm.context_window_tokens == raw["llm"]["context_window_tokens"]
     assert loaded.config.llm.thinking_enabled is True
-    assert loaded.config.llm.timeout_seconds == 400
+    assert loaded.config.llm.timeout_seconds == raw["llm"]["timeout_seconds"]
 
 
 def test_legacy_llm_budget_keys_are_migrated(tmp_path, sample_config_path):

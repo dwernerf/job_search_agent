@@ -148,22 +148,6 @@ def default_drop_job_patterns() -> list[str]:
 
 
 
-def default_bootstrap_templates() -> list[str]:
-    return [
-        "{roles} jobs {location} careers",
-        "{roles} {location} job openings",
-        "{roles} {location} greenhouse lever workday personio",
-        "{role_terms} Stellenangebote {location_terms}",
-        "{role_terms} Karriere {location_terms}",
-        "{expertise_terms} {location_terms} jobs",
-        "{expertise_terms} {location_terms} Karriere",
-        "site:greenhouse.io {roles} {location}",
-        "site:lever.co {roles} {location}",
-        "site:personio.de {roles} {location}",
-        "site:join.com {roles} {location}",
-    ]
-
-
 class AppConfig(StrictModel):
     name: str = "jobagent-local"
     data_dir: str = "data"
@@ -415,13 +399,21 @@ class MemoryConfig(StrictModel):
 
 class ExplorationConfig(StrictModel):
     enabled: bool = True
-    seeding_mode: Literal["seeds", "bootstrap", "both"] = "both"
     candidate_url_limit_per_search_page: int = Field(default=30, gt=0)
     job_portal_domain_substrings: list[str] = Field(default_factory=lambda: ["linkedin.com/jobs", "indeed.", "stepstone.", "stellenanzeigen.", "xing.com/jobs", "monster.", "kimeta.", "jobs.de", "jobvector.", "yourfirm.", "glassdoor."])
-    bootstrap_query_templates: list[str] = Field(default_factory=default_bootstrap_templates)
-    search_url_templates: list[str] = Field(default_factory=list)
     local_area_terms: list[str] = Field(default_factory=list)
     source_discovery_terms: list[str] = Field(default_factory=list)
+
+
+class BootstrappedSearchConfig(StrictModel):
+    search_url_templates: list[str] = Field(default_factory=list)
+    job_suffixes: list[str] = Field(default_factory=list)
+    company_whitelist: list[str] = Field(default_factory=list)
+
+
+class SeedingConfig(StrictModel):
+    mode: Literal["seeds", "bootstrap", "both"] = "both"
+    bootstrapped_search: BootstrappedSearchConfig = Field(default_factory=BootstrappedSearchConfig)
 
 
 class CompanyFiltersConfig(StrictModel):
@@ -460,18 +452,12 @@ class IntentLocation(StrictModel):
 
 class IntentCompanies(StrictModel):
     blacklist: list[str] = Field(default_factory=list)
-
-
-class IntentSearch(StrictModel):
-    search_url_templates: list[str] = Field(default_factory=list)
+    whitelist: list[str] = Field(default_factory=list)
 
 
 class IntentConfig(StrictModel):
     location: IntentLocation = Field(default_factory=IntentLocation)
     companies: IntentCompanies = Field(default_factory=IntentCompanies)
-    search: IntentSearch = Field(default_factory=IntentSearch)
-
-
 class JobAgentConfig(StrictModel):
     app: AppConfig = Field(default_factory=AppConfig)
     target: TargetConfig = Field(default_factory=TargetConfig)
@@ -490,6 +476,7 @@ class JobAgentConfig(StrictModel):
     companies: CompanyFiltersConfig = Field(default_factory=CompanyFiltersConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     exploration: ExplorationConfig = Field(default_factory=ExplorationConfig)
+    seeding: SeedingConfig = Field(default_factory=SeedingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     intent: IntentConfig = Field(default_factory=IntentConfig)
 
@@ -604,9 +591,9 @@ def _merge_intent(config: JobAgentConfig, intent: IntentConfig) -> None:
     if comp.blacklist:
         config.companies.blacklist = list(comp.blacklist)
 
-    srch = intent.search
-    if srch.search_url_templates:
-        config.exploration.search_url_templates = list(srch.search_url_templates)
+    # Wire company whitelist from intent.yaml to bootstrapped search.
+    if comp.whitelist:
+        config.seeding.bootstrapped_search.company_whitelist = list(comp.whitelist)
 
 
 def ensure_data_dirs(paths: RuntimePaths) -> None:

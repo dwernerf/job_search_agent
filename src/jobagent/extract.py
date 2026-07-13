@@ -33,30 +33,7 @@ def compact_text(text: str, config: JobAgentConfig) -> str:
     return body[: config.crawler.max_page_text_chars]
 
 
-def rank_candidate_links(snapshot: PageSnapshot, config: JobAgentConfig) -> list[LinkCandidate]:
-    ranked: list[LinkCandidate] = []
-    seen: set[str] = set()
 
-    for raw_link in snapshot.links:
-        url = clean_url(raw_link.url, snapshot.final_url or snapshot.url, config)
-        if not url or url in seen:
-            continue
-
-        text = re.sub(r"\s+", " ", raw_link.text or "").strip()
-        if denied_by_safety(url, text, config):
-            continue
-
-        score = 0.0
-        reason = ""
-
-        if url == (snapshot.final_url or snapshot.url):
-            score += 0.25
-
-        seen.add(url)
-        ranked.append(LinkCandidate(text=text, url=url, score=score, reason=reason))
-
-    ranked.sort(key=lambda x: x.score, reverse=True)
-    return ranked
 
 
 def strip_llm_noise(raw: str) -> str:

@@ -16,16 +16,8 @@ app:
   user_agent: JobMatchAgent/0.1 (+local personal job search; read-only)
 
 target:
-  # Languages to understand. Language itself is not scored positively or negatively.
-  # Default is read from config/intent.yaml on startup.
-  languages: []
-
   # Keep explicitly remote-from-Germany jobs even if no office is inside the radius.
   include_remote: true
-
-  # Human-readable target area used in prompts and logs.
-  # Default is read from config/intent.yaml on startup.
-  local_area: ""
 
 profile:
   # Single source of truth for roles, aliases, expertise, industries, and exclusions.
@@ -120,11 +112,6 @@ scoring:
   # Fit score threshold (0-100) that triggers a high-fit bonus (boosts source quality).
   high_fit_score_threshold: 80
 
-companies:
-  # Drop exported jobs from these companies. Leave empty unless needed.
-  # Default is read from config/intent.yaml on startup.
-  blacklist: []
-
 memory:
   # Stored in data/jobs.sqlite, table source_memory.
   # Higher source scores are opened earlier in future runs.
@@ -139,16 +126,23 @@ exploration:
   # true lets the agent discover URLs beyond seeds.txt.
   enabled: true
 
-  # Direct search endpoints for exploratory profile searches.
-  # Avoid generic search engines by default because they frequently return 403
-  # or CAPTCHA pages in unattended local runs.
-  # Supported placeholders: {query} URL-encoded text, {query_slug} path-safe text.
-  # Default is read from config/intent.yaml on startup.
-  search_url_templates: []
+# Seed configuration
+# set seeding.mode to "seeds" to populate from seeds.txt, 
+# "bootstrap" to generated links from search template with extracted terms 
+# from profile.md and intent.yml or "both".
+seeding:
+  mode: bootstrap
 
-  # "seeds" = seeds.txt only, "bootstrap" = query-driven searches only,
-  # "both" = populate frontier with both (deduped).
-  seeding_mode: both
+  bootstrapped_search:
+    # Search endpoints for bootstrapped queries.
+    # Supported placeholders: {query} URL-encoded text, {query_slug} path-safe text.
+    search_url_templates:
+      - https://search.brave.com/search?q={query}
+
+    # Suffixes randomly appended to each role+city query. One is chosen per query.
+    job_suffixes:
+      - job offerings
+      - stellenangebote
 
 job_validation:
   # Drops initiative applications, invented links, city-only titles, and index pages.
@@ -176,7 +170,7 @@ logging:
   # Only two levels are supported:
   #   info  = structured step/result logs
   #   debug = info plus skipped URLs and low-level details
-  level: debug
+  level: info
   console: true
   file: true
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlparse, urlunparse, quote_plus
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 
 from .config import JobAgentConfig
 from .language import multilingual_job_terms, multilingual_role_terms
@@ -104,19 +104,8 @@ def domain_from_url(url: str) -> str:
     return normalize_domain(urlparse(url).netloc)
 
 
-def query_slug(query: str) -> str:
-    value = query.casefold()
-    value = value.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    return value.strip("-") or "jobs"
-
-
 def render_query_url(query: str, template: str) -> str:
-    return template.format(
-        query=quote_plus(query),
-        query_plus=quote_plus(query),
-        query_slug=query_slug(query),
-    )
+    return template.format(query=quote(query))
 
 
 def same_domain(left: str, right: str) -> bool:

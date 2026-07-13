@@ -9,7 +9,7 @@ from .config import JobAgentConfig
 from .company_filters import compact_text
 from .db import Database
 from .models import FrontierItem, LinkCandidate
-from .language import bootstrap_template_values
+
 from .urltools import career_candidate_urls, clean_url, render_query_url, source_key
 
 
@@ -35,14 +35,27 @@ def read_seed_urls(path: Path, config: JobAgentConfig) -> list[str]:
 
 
 def bootstrap_queries(config: JobAgentConfig) -> list[str]:
-    values = bootstrap_template_values(config)
-    queries = [template.format(**values) for template in config.exploration.bootstrap_query_templates]
-    return list(dict.fromkeys(q.strip() for q in queries if q.strip()))
+    """Generate one simple query per target role: 'Role City' + one random job suffix + optional whitelist company."""
+    city = config.target.local_area.split(",")[0].strip()
+    queries: list[str] = []
+    suffixes = config.seeding.bootstrapped_search.job_suffixes
+    whitelist = config.seeding.bootstrapped_search.company_whitelist
+    for role in config.target.roles:
+        # Pick one random suffix to append
+        suffix = random.choice(suffixes) if suffixes else ""
+        query = f"{role} {city}"
+        if suffix:
+            query = f"{query} {suffix}"
+        if whitelist and random.random() < 0.5:
+            query = f"{query} {random.choice(whitelist)}"
+        if query not in queries:
+            queries.append(query)
+    return queries
 
 
 def search_urls_for_query(query: str, config: JobAgentConfig, templates: list[str] | None = None) -> list[str]:
     out: list[str] = []
-    for template in templates or config.exploration.search_url_templates:
+    for template in templates or config.seeding.bootstrapped_search.search_url_templates:
         raw = render_query_url(query, template)
         url = clean_url(raw, None, config)
         if url:
@@ -68,7 +81,7 @@ def allow_exploratory_searches(config: JobAgentConfig) -> bool:
 
 def seed_frontier(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
     count = 0
-    mode = config.exploration.seeding_mode
+    mode = config.seeding.mode
 
     if mode in ("seeds", "both"):
         seeds = read_seed_urls(seed_path, config)
@@ -115,7 +128,7 @@ def enqueue_links(
             url=url,
             depth=next_depth,
             discovered_from=source_url,
-            reason=link.reason or link.text,
+            reason=link.text,
             source_key=source_key(url, config),
         )
         if db.enqueue(item):
@@ -133,7 +146,7 @@ def enqueue_follow_urls(
     links: list[LinkCandidate] = []
     for url in urls:
         cleaned = clean_url(url, source_url, config)
-        links.append(LinkCandidate(text="llm-follow", url=url, score=2.0, reason="LLM follow URL"))
+        links.append(LinkCandidate(text="llm-follow", url=url))
     return enqueue_links(links, source_url, next_depth, config, db)
 
 
@@ -145,7 +158,7 @@ def enqueue_career_candidates(
     db: Database,
 ) -> int:
     links = [
-        LinkCandidate(text="career candidate", url=candidate, score=1.5, reason="standard career path")
+        LinkCandidate(text="career candidate", url=candidate)
         for candidate in career_candidate_urls(url, config)
     ]
     return enqueue_links(links, source_url, next_depth, config, db)

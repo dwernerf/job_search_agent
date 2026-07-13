@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from jobagent.discover import bootstrap_queries
-from jobagent.extract import compact_text, page_decision_from_dict, rank_candidate_links
+from jobagent.extract import compact_text, page_decision_from_dict
 from jobagent.language import bootstrap_template_values, language_policy_summary, multilingual_role_terms
-from jobagent.models import LinkCandidate, PageSnapshot
+from jobagent.models import PageSnapshot
 from jobagent.urltools import career_candidate_urls, denied_by_safety
 
 
@@ -13,25 +13,6 @@ def test_multilingual_config_is_active(loaded_sample):
     assert cfg.multilingual.primary_market_language == "German"
     assert "German" in cfg.multilingual.accepted_languages
     assert "English" in cfg.multilingual.accepted_languages
-
-
-def test_german_career_links_are_ranked(loaded_sample):
-    cfg = loaded_sample.config
-    snapshot = PageSnapshot(
-        url="https://firma.test",
-        final_url="https://firma.test",
-        title="Firma",
-        text="",
-        links=[
-            LinkCandidate(text="Karriere", url="/karriere"),
-            LinkCandidate(text="Offene Stellen", url="/stellenangebote"),
-            LinkCandidate(text="Über uns", url="/ueber-uns"),
-        ],
-    )
-    ranked = rank_candidate_links(snapshot, cfg)
-    urls = [item.url for item in ranked]
-    assert "https://firma.test/karriere" in urls
-    assert "https://firma.test/stellenangebote" in urls
 
 
 def test_compact_text_keeps_german_and_english_signals(loaded_sample):
@@ -45,27 +26,8 @@ def test_compact_text_keeps_german_and_english_signals(loaded_sample):
 def test_bootstrap_queries_include_german_english_and_mixed_terms(loaded_sample):
     cfg = loaded_sample.config
     queries = bootstrap_queries(cfg)
-    assert any("Stellenangebote" in query or "Karriere" in query for query in queries)
     assert any("procurement" in query.lower() or "purchasing" in query.lower() for query in queries)
-    assert any("Strategischer Einkäufer" in query or "Supplier Quality Manager München" in query for query in queries)
-
-
-def test_link_classification_works_with_multilingual_terms(loaded_sample):
-    cfg = loaded_sample.config
-    snapshot = PageSnapshot(
-        url="https://firma.test",
-        final_url="https://firma.test",
-        title="Firma",
-        text="",
-        links=[
-            LinkCandidate(text="Karriere", url="/karriere"),
-            LinkCandidate(text="Offene Stellen", url="/stellenangebote"),
-        ],
-    )
-    ranked = rank_candidate_links(snapshot, cfg)
-    urls = [item.url for item in ranked]
-    assert "https://firma.test/karriere" in urls
-    assert "https://firma.test/stellenangebote" in urls
+    assert any("Munich" in query for query in queries)
 
 
 def test_career_candidate_urls_include_german_paths(loaded_sample):
