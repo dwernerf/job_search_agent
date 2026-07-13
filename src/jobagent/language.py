@@ -79,7 +79,7 @@ def bootstrap_template_values(config: JobAgentConfig) -> dict[str, str]:
     german_roles = role_query_text(config, config.multilingual.german_role_terms or config.target.roles)
     english_roles = role_query_text(config, config.multilingual.english_role_terms or config.target.roles)
     mixed_roles = role_query_text(config, multilingual_role_terms(config))
-    role_terms = role_query_text(config, config.score_consistency.target_role_terms or multilingual_role_terms(config), max_terms=12)
+    role_terms = role_query_text(config, multilingual_role_terms(config), max_terms=12)
     expertise_terms = role_query_text(config, config.matching.preferred_terms, max_terms=8)
     job_terms = role_query_text(config, multilingual_job_terms(config), max_terms=10)
     location_terms = role_query_text(
@@ -87,10 +87,10 @@ def bootstrap_template_values(config: JobAgentConfig) -> dict[str, str]:
         unique_terms([config.target.local_area] + config.matching.location_aliases + config.exploration.local_area_terms),
         max_terms=8,
     )
-    roles = role_query_text(config, config.target.roles or config.score_consistency.target_role_terms, max_terms=8)
+    roles = role_query_text(config, config.target.roles, max_terms=8)
     return {
         "roles": roles,
-        "role": (config.target.roles or config.score_consistency.target_role_terms or ["job"])[0],
+        "role": (config.target.roles or ["job"])[0],
         "role_terms": role_terms,
         "expertise_terms": expertise_terms,
         "location": config.target.local_area,

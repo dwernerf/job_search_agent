@@ -50,7 +50,6 @@ def test_action_reporter_no_longer_emits_interval_summary(temp_loaded):
     reporter = ActionReporter(cfg, logger, clock=clock)
 
     reporter.record_enqueued(5)
-    reporter.record_generated_queries(1)
     reporter.record_page(status="ok", jobs_seen=1, jobs_saved=1, high_fit_jobs=1, source_quality=80, queued=3)
     clock.advance(9999)
     reporter.record_page(status="error:KeyError", jobs_seen=0, jobs_saved=0, source_quality=0, queued=2)
@@ -61,7 +60,6 @@ def test_action_reporter_no_longer_emits_interval_summary(temp_loaded):
     output = stream.getvalue()
     assert "RESULT run_summary" in output
     assert "jobs_saved=1" in output
-    assert "generated_queries=1" in output
     assert "enqueued_urls=5" in output
     assert "errors=1" in output
     assert "avg_source_quality=80.0" in output

@@ -18,12 +18,10 @@ def test_runtime_paths_resolve_relative_to_repo(sample_config_path):
 
 
 
-def test_llm_config_uses_simple_12k_context(sample_config_path):
+def test_llm_config_uses_large_context_window(sample_config_path):
     loaded = load_config(sample_config_path)
     assert loaded.config.llm.base_url == "http://127.0.0.1:8087/v1"
-    assert loaded.config.llm.context_window_tokens == 12000
-    assert loaded.config.llm.output_tokens == 5000
-    assert loaded.config.llm.max_prompt_tokens == 6400
+    assert loaded.config.llm.context_window_tokens == 150000
     assert loaded.config.llm.thinking_enabled is True
     assert loaded.config.llm.timeout_seconds == 400
 
@@ -48,13 +46,11 @@ def test_legacy_llm_budget_keys_are_migrated(tmp_path, sample_config_path):
             "token_estimate_chars_per_token": 4.0,
             "max_page_text_chars_for_prompt": 6500,
             "min_page_text_chars_for_prompt": 1800,
-            "max_candidate_links_for_prompt": 35,
-            "min_candidate_links_for_prompt": 8,
         }
     )
     config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     loaded = load_config(config_path)
-    assert loaded.config.llm.output_tokens == 1234
     assert loaded.config.llm.thinking_enabled is False
     assert loaded.config.llm.disable_thinking is True
+    assert loaded.config.llm.no_think_prefix == "/no_think"

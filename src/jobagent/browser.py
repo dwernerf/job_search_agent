@@ -96,7 +96,7 @@ class BrowserSession:
 
             links = [
                 LinkCandidate(text=str(item.get("text") or ""), url=str(item.get("url") or ""))
-                for item in raw_links[: self.config.crawler.max_raw_links_retained]
+                for item in raw_links
             ]
 
             try:

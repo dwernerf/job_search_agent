@@ -2,12 +2,7 @@ from __future__ import annotations
 
 from jobagent.agent import JobAgent
 from jobagent.db import Database
-from jobagent.models import JobMatch, LinkCandidate, PageDecision, PageSnapshot
-
-
-class AllowAllRobots:
-    def allowed(self, url: str) -> bool:
-        return True
+from jobagent.models import JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot
 
 
 class FakeBrowser:
@@ -25,12 +20,11 @@ class FakeBrowser:
 
 
 class FakeLLM:
-    def generate_queries(self, memory_summary: str, run_summary: str):
-        return []
+    pass
 
 
 class HallucinatedUrlLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         return PageDecision(
             jobs=[
                 JobMatch(
@@ -43,14 +37,17 @@ class HallucinatedUrlLLM(FakeLLM):
                     evidence="Procurement Manager Optical Components",
                 )
             ],
-            follow_urls=[],
+            link_classifications=[],
             source_quality=60,
             source_notes="test page",
         )
 
+    def classify_links_batch(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        return self.analyze_page(snapshot, links_with_context, memory_summary)
+
 
 class InitiativeLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         return PageDecision(
             jobs=[
                 JobMatch(
@@ -63,10 +60,13 @@ class InitiativeLLM(FakeLLM):
                     evidence="Initiativbewerbung",
                 )
             ],
-            follow_urls=[],
+            link_classifications=[],
             source_quality=20,
             source_notes="initiative application only",
         )
+
+    def classify_links_batch(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        return self.analyze_page(snapshot, links_with_context, memory_summary)
 
 
 def test_llm_job_url_must_come_from_current_page(temp_loaded):
@@ -84,7 +84,6 @@ def test_llm_job_url_must_come_from_current_page(temp_loaded):
         db=db,
         browser_factory=lambda: FakeBrowser({"https://example.test/jobs": snapshot}),
         llm_client=HallucinatedUrlLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
@@ -106,7 +105,6 @@ def test_initiativbewerbung_is_not_saved_as_job(temp_loaded):
         db=db,
         browser_factory=lambda: FakeBrowser({"https://example.test/jobs": snapshot}),
         llm_client=InitiativeLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
@@ -114,7 +112,7 @@ def test_initiativbewerbung_is_not_saved_as_job(temp_loaded):
 
 
 class OverviewLinkAsJobLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         return PageDecision(
             jobs=[
                 JobMatch(
@@ -127,30 +125,53 @@ class OverviewLinkAsJobLLM(FakeLLM):
                     evidence="Procurement Manager Optical Components",
                 )
             ],
-            follow_urls=["https://example.test/jobs/procurement-manager-optics-123456"],
+            link_classifications=[],
             source_quality=70,
             source_notes="overview page",
         )
 
+    def classify_links_batch(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        return self.analyze_page(snapshot, links_with_context, memory_summary)
+
 
 class DetailPageLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         return PageDecision(
-            jobs=[
-                JobMatch(
-                    title="Procurement Manager Optical Components",
-                    company="Example GmbH",
-                    location="München",
-                    url=snapshot.final_url,
-                    fit_score=91,
-                    reason="Loaded page is a concrete procurement job in München",
-                    evidence="Procurement Manager Optical Components",
-                )
-            ],
-            follow_urls=[],
+            jobs=[],
+            link_classifications=[],
             source_quality=90,
             source_notes="job detail page",
         )
+
+    def classify_links_batch(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        # Simulate that the current page is a detail page by returning the job
+        jobs = [
+            JobMatch(
+                title="Procurement Manager Optical Components",
+                company="Example GmbH",
+                location="München",
+                url=snapshot.final_url,
+                fit_score=91,
+                reason="Loaded page is a concrete procurement job in München",
+                evidence="Procurement Manager Optical Components",
+            )
+        ]
+        # Simulate that the first link is a job_listing with a high fit score
+        classifications = [
+            LinkClassification(index=0, type="job_listing", fit_score=91, title="Procurement Manager Optical Components", company="Example GmbH", location="München", evidence="Procurement Manager Optical Components", reason="Loaded page is a concrete procurement job in München"),
+        ]
+        decision = PageDecision(
+            jobs=jobs,
+            link_classifications=classifications,
+            source_quality=90,
+            source_notes="job detail page",
+        )
+        # Inject URLs from links_with_context (the LLM prompt omits them)
+        ctx_by_index = {int(item["index"]): item["url"] for item in links_with_context}
+        for c in decision.link_classifications:
+            if not c.url and c.index in ctx_by_index:
+                c.url = ctx_by_index[c.index]
+        return decision
 
 
 def test_overview_page_candidate_link_is_not_saved_as_job(temp_loaded):
@@ -168,7 +189,6 @@ def test_overview_page_candidate_link_is_not_saved_as_job(temp_loaded):
         db=db,
         browser_factory=lambda: FakeBrowser({"https://example.test/jobs/procurement/muenchen": snapshot}),
         llm_client=OverviewLinkAsJobLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
@@ -183,7 +203,7 @@ def test_loaded_detail_page_current_url_can_be_saved(temp_loaded):
         final_url=url,
         title="Procurement Manager Optical Components",
         text="Procurement Manager Optical Components. München. Responsibilities and requirements for sourcing optical components.",
-        links=[],
+        links=[LinkCandidate(text="Procurement Manager", url=url)],
     )
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
     agent = JobAgent(
@@ -191,7 +211,6 @@ def test_loaded_detail_page_current_url_can_be_saved(temp_loaded):
         db=db,
         browser_factory=lambda: FakeBrowser({url: snapshot}),
         llm_client=DetailPageLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 0
     row = db.conn.execute("select title, url from jobs").fetchone()

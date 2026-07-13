@@ -16,7 +16,6 @@ class RunStats:
     high_fit_jobs: int = 0
     errors: int = 0
     blocked: int = 0
-    generated_queries: int = 0
     enqueued_urls: int = 0
     quality_total: int = 0
     quality_count: int = 0
@@ -33,26 +32,20 @@ class ActionReporter:
 
     DEBUG_ONLY_EVENTS = {
         "skip_depth_limit",
-        "skip_location_scope",
         "skip_visited",
         "skip_source_limit",
-        "heuristic_jobs",
     }
 
     RESULT_EVENTS = {
         "seed_frontier",
-        "recalibrate_existing_jobs",
         "page_fetched",
         "page_analyzed",
         "page_complete",
         "job_validation_guard",
-        "score_guard",
-        "enqueue_exploration",
-        "generate_queries",
+        "score_guard_dropped",
         "export_results",
         "frontier_empty_stop",
         "page_failed",
-        "blocked_by_robots",
         "run_complete",
         "run_summary",
     }
@@ -91,9 +84,7 @@ class ActionReporter:
         self.stats.jobs_saved += max(0, jobs_saved)
         self.stats.high_fit_jobs += max(0, high_fit_jobs)
 
-        if status == "blocked_by_robots":
-            self.stats.blocked += 1
-        elif status != "ok":
+        if status != "ok":
             self.stats.errors += 1
 
         if source_quality > 0:
@@ -102,9 +93,6 @@ class ActionReporter:
 
     def record_enqueued(self, count: int) -> None:
         self.stats.enqueued_urls += max(0, count)
-
-    def record_generated_queries(self, count: int) -> None:
-        self.stats.generated_queries += max(0, count)
 
     def maybe_summary(self, *, queued: int, force: bool = False) -> None:
         if not force:
@@ -120,13 +108,12 @@ class ActionReporter:
         )
         self.logger.info(
             "RESULT run_summary pages=%s jobs_seen=%s jobs_saved=%s high_fit_jobs=%s "
-            "generated_queries=%s enqueued_urls=%s blocked=%s errors=%s "
+            "enqueued_urls=%s blocked=%s errors=%s "
             "avg_source_quality=%.1f queued=%s elapsed_seconds=%.1f actions=%s",
             self.stats.pages,
             self.stats.jobs_seen,
             self.stats.jobs_saved,
             self.stats.high_fit_jobs,
-            self.stats.generated_queries,
             self.stats.enqueued_urls,
             self.stats.blocked,
             self.stats.errors,

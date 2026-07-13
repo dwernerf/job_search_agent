@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(slots=True)
@@ -10,6 +10,7 @@ class LinkCandidate:
     url: str
     score: float = 0.0
     reason: str = ""
+    index: int = 0
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
@@ -41,55 +42,36 @@ class JobMatch:
     reason: str
     evidence: str
     posting_language: str = ""
-    score_source: str = "llm"
-    score_basis: str = ""
+
+
+@dataclass(slots=True)
+class LinkClassification:
+    index: int
+    type: Literal["job_listing", "explore", "skip"]
+    fit_score: int = 0
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    evidence: str = ""
+    reason: str = ""
 
 
 @dataclass(slots=True)
 class PageDecision:
     jobs: list[JobMatch]
-    follow_urls: list[str]
     source_quality: int
     source_notes: str
-
-
-@dataclass(slots=True)
-class QuerySuggestion:
-    query: str
-    reason: str
+    link_classifications: list[LinkClassification] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class FrontierItem:
     url: str
     depth: int
-    priority: float
-    discovered_from: str
-    reason: str
-    source_key: str
-
-
-@dataclass(slots=True)
-class SourceMemoryRow:
-    source_key: str
-    domain: str
-    score: float
-    visits: int
-    jobs_found: int
-    high_fit_jobs: int
-    errors: int
-    blocked: int
-    no_job_streak: int
-    last_quality: int
-    notes: str
-
-
-def clamp_int(value: Any, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except Exception:
-        parsed = minimum
-    return max(minimum, min(maximum, parsed))
+    discovered_from: str = ""
+    reason: str = ""
+    source_key: str = ""
 
 
 def as_text(value: Any, max_len: int) -> str:

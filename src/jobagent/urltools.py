@@ -104,31 +104,6 @@ def domain_from_url(url: str) -> str:
     return normalize_domain(urlparse(url).netloc)
 
 
-def link_hint_score(url: str, text: str, config: JobAgentConfig) -> tuple[float, str]:
-    combined = f"{url} {text}".casefold()
-    hits: list[str] = []
-
-    weighted_terms: list[tuple[str, float]] = []
-    weighted_terms.extend((term, 1.0) for term in multilingual_job_terms(config))
-    weighted_terms.extend((term, 0.75) for term in multilingual_role_terms(config))
-    weighted_terms.extend((term, 0.75) for term in config.crawler.source_discovery_terms)
-    weighted_terms.extend((term, 0.75) for term in config.exploration.source_discovery_terms)
-    weighted_terms.extend((term, 0.5) for term in config.matching.location_aliases)
-
-    score = 0.0
-    seen: set[str] = set()
-    for hint, weight in weighted_terms:
-        key = hint.casefold().strip()
-        if not key or key in seen:
-            continue
-        if key in combined:
-            hits.append(hint)
-            score += weight
-            seen.add(key)
-
-    return score, ", ".join(hits[:5])
-
-
 def query_slug(query: str) -> str:
     value = query.casefold()
     value = value.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")

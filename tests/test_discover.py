@@ -32,51 +32,5 @@ def test_default_seed_file_has_active_munich_sources(loaded_sample):
     assert any("jobs.personio.de" in url or "join.com/companies" in url for url in urls)
 
 
-def test_duplicate_generated_query_requeues_previously_blocked_page_when_robots_now_disabled(temp_loaded):
-    from jobagent.discover import enqueue_query_suggestions, search_urls_for_query
-    from jobagent.models import QuerySuggestion
-
-    cfg = temp_loaded.config
-    assert cfg.crawler.respect_robots_txt is False
-    assert cfg.crawler.retry_previously_blocked_when_robots_disabled is True
-
-    temp_loaded.paths.seeds_path.write_text("", encoding="utf-8")
-    db = Database(temp_loaded.paths.database_path, cfg)
-    query = "Procurement Manager Munich careers"
-    url = search_urls_for_query(query, cfg)[0]
-
-    db.save_query(query, "already generated in a previous run", "llm")
-    item_count = seed_frontier(cfg, db, temp_loaded.paths.seeds_path)
-    assert item_count == 0
-
-    db.record_page(
-        url=url,
-        final_url=url,
-        title="",
-        source_key="duckduckgo.com/html",
-        depth=0,
-        status="blocked_by_robots",
-        jobs_found=0,
-        high_fit_jobs=0,
-        source_quality=0,
-        discovered_from="previous-run",
-    )
-    db.enqueue(
-        __import__("jobagent.discover", fromlist=["make_frontier_item"]).make_frontier_item(
-            url=url,
-            depth=0,
-            discovered_from="previous-run",
-            reason=query,
-            config=cfg,
-            db=db,
-            link_hint=1.0,
-        )
-    )
-    db.mark_frontier(url, "blocked")
-
-    enqueued = enqueue_query_suggestions([QuerySuggestion(query=query, reason="retry duplicate")], cfg, db)
-    assert enqueued >= 1
-    assert db.queued_count() >= 1
-    db.close()
 
 

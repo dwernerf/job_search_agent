@@ -8,10 +8,9 @@ from typing import Any
 import requests
 
 from .config import JobAgentConfig
-from .extract import compact_text, page_decision_from_dict, parse_json_object, query_suggestions_from_dict
+from .extract import compact_text, page_decision_from_dict, parse_json_object
 from .language import language_policy_summary, multilingual_job_terms, multilingual_role_terms
-from .location import location_radius_summary
-from .models import LinkCandidate, PageDecision, PageSnapshot, QuerySuggestion
+from .models import LinkCandidate, PageDecision, PageSnapshot
 from .prompts import PromptBook
 
 
@@ -31,6 +30,11 @@ class LLMResponseError(RuntimeError):
         if self.raw_content:
             parts.append("raw_content=" + self.raw_content[:limit])
         return " | ".join(parts)
+
+
+class ContextWindowExceeded(ValueError):
+    """Raised when the prompt would exceed the configured context window."""
+    pass
 
 
 class LocalLLMClient:
@@ -56,10 +60,6 @@ class LocalLLMClient:
             return False, f"HTTP {response.status_code}: {response.text[:500]}"
         return True, "ok"
 
-    def _estimate_tokens(self, *parts: str) -> int:
-        chars = sum(len(part or "") for part in parts)
-        return int(math.ceil(chars / self.config.llm.token_estimate_chars_per_token))
-
     def _clip(self, text: str, max_chars: int) -> str:
         value = text or ""
         if len(value) <= max_chars:
@@ -68,137 +68,65 @@ class LocalLLMClient:
         keep = max(0, max_chars - len(marker))
         return value[:keep] + marker
 
-    def _links_json_for_prompt(self, links: list[LinkCandidate], limit: int) -> str:
+    def _links_json_for_prompt(self, links_or_context: list[dict[str, str]]) -> str:
         items: list[dict[str, Any]] = []
-        for link in links[:limit]:
-            items.append(
-                {
-                    "text": self._clip(link.text, self.config.llm.max_candidate_link_text_chars),
-                    "url": self._clip(link.url, self.config.llm.max_candidate_link_url_chars),
-                    "score": round(link.score, 2),
-                    "reason": self._clip(link.reason, 120),
+        for item in links_or_context:
+            # Accept both dict format (from agent.py) and LinkCandidate (from tests)
+            if isinstance(item, dict):
+                entry = {
+                    "index": item.get("index", 0),
+                    "text": item.get("text") or "",
+                    "url": item.get("url") or "",
+                    "page_context": (item.get("page_context") or "")[:8000],
                 }
-            )
+            else:
+                # LinkCandidate fallback
+                entry = {
+                    "index": getattr(item, "index", 0),
+                    "text": getattr(item, "text", "") or "",
+                    "url": getattr(item, "url", "") or "",
+                    "page_context": (getattr(item, "page_context", "") or "")[:8000],
+                }
+            items.append(entry)
         return json.dumps(items, ensure_ascii=False)
 
-    def _common_values(self, memory_summary: str) -> dict[str, str]:
+    def _common_values(self) -> dict[str, str]:
         return {
             "no_think_prefix": self.config.llm.no_think_prefix if self.config.llm.disable_thinking else "",
-            "profile": self._clip(self.profile_text, self.config.llm.max_profile_chars),
+            "profile": self.profile_text[:50000],
             "local_area": self.config.target.local_area,
             "roles": ", ".join(self.config.target.roles),
             "target_languages": ", ".join(self.config.target.languages),
             "language_policy": self._clip(language_policy_summary(self.config), 500),
-            "location_policy": location_radius_summary(self.config),
-            "location_radius_policy": location_radius_summary(self.config),
             "multilingual_role_terms": self._clip(", ".join(multilingual_role_terms(self.config)), 700),
             "multilingual_job_terms": self._clip(", ".join(multilingual_job_terms(self.config)), 700),
             "location_aliases": self._clip(", ".join(self.config.matching.location_aliases), 400),
             "preferred_terms": self._clip(", ".join(self.config.matching.preferred_terms), 800),
             "avoid_terms": self._clip(", ".join(self.config.matching.avoid_terms), 700),
-            "memory_summary": self._clip(memory_summary, self.config.llm.max_memory_chars),
         }
 
     def _render_page_prompts(
         self,
         snapshot: PageSnapshot,
-        candidate_links: list[LinkCandidate],
+        links_with_context: list[dict[str, str]],
         memory_summary: str,
     ) -> tuple[str, str]:
-        link_limit = min(len(candidate_links), self.config.llm.max_candidate_links_for_prompt)
-        text_limit = self.config.llm.max_page_text_chars_for_prompt
-        profile_limit = self.config.llm.max_profile_chars
-        memory_limit = self.config.llm.max_memory_chars
-
-        last_system = ""
-        last_user = ""
-        for _ in range(18):
-            values = self._common_values(memory_summary[:memory_limit])
-            values["profile"] = self._clip(self.profile_text, profile_limit)
-            values.update(
-                {
-                    "url": snapshot.url,
-                    "final_url": snapshot.final_url,
-                    "title": self._clip(snapshot.title, 500),
-                    "http_status_code": str(getattr(snapshot, "status_code", 0) or 0),
-                    "text": self._clip(compact_text(snapshot.text, self.config), text_limit),
-                    "candidate_links_json": self._links_json_for_prompt(candidate_links, link_limit),
-                }
-            )
-            system = self.prompt_book.render("page_analysis_system", values)
-            user = self.prompt_book.render("page_analysis_user", values)
-            last_system, last_user = system, user
-            if self._estimate_tokens(system, user) <= self.config.llm.max_prompt_tokens:
-                return system, user
-
-            if link_limit > self.config.llm.min_candidate_links_for_prompt:
-                link_limit = max(self.config.llm.min_candidate_links_for_prompt, int(link_limit * 0.65))
-            elif text_limit > self.config.llm.min_page_text_chars_for_prompt:
-                text_limit = max(self.config.llm.min_page_text_chars_for_prompt, int(text_limit * 0.65))
-            elif memory_limit > 600:
-                memory_limit = max(600, int(memory_limit * 0.65))
-            elif profile_limit > 1400:
-                profile_limit = max(1400, int(profile_limit * 0.65))
-            elif link_limit > 3:
-                link_limit = 3
-            elif text_limit > 700:
-                text_limit = 700
-            else:
-                break
-
-        # Last-resort hard cap: keep the JSON instructions at the end of the prompt
-        # by trimming only the large variable fields through another render.
-        values = self._common_values(memory_summary[:500])
-        values["profile"] = self._clip(self.profile_text, 800)
+        values = self._common_values()
         values.update(
             {
                 "url": snapshot.url,
                 "final_url": snapshot.final_url,
-                "title": self._clip(snapshot.title, 200),
+                "title": self._clip(snapshot.title, 500),
                 "http_status_code": str(getattr(snapshot, "status_code", 0) or 0),
-                "text": self._clip(compact_text(snapshot.text, self.config), 400),
-                "candidate_links_json": self._links_json_for_prompt(candidate_links, min(2, len(candidate_links))),
+                "text": self._clip(compact_text(snapshot.text, self.config), 14000),
+                "links_with_context": self._links_json_for_prompt(links_with_context),
             }
         )
         system = self.prompt_book.render("page_analysis_system", values)
         user = self.prompt_book.render("page_analysis_user", values)
-        if self._estimate_tokens(system, user) <= self.config.llm.max_prompt_tokens:
-            return system, user
-        # Should be rare; throw a local error with an actionable message rather than
-        # sending an over-context request to llama.cpp.
-        raise LLMResponseError(
-            f"LLM prompt still exceeds configured budget after truncation: estimated_prompt_tokens={self._estimate_tokens(system, user)}, allowed_prompt_tokens={self.config.llm.max_prompt_tokens}"
-        )
+        return system, user
 
-    def _render_query_prompts(self, memory_summary: str, run_summary: str) -> tuple[str, str]:
-        memory_limit = self.config.llm.max_memory_chars
-        profile_limit = self.config.llm.max_profile_chars
-        last_system = ""
-        last_user = ""
-        for _ in range(12):
-            values = self._common_values(memory_summary[:memory_limit])
-            values["profile"] = self._clip(self.profile_text, profile_limit)
-            values["run_summary"] = self._clip(run_summary, 900)
-            system = self.prompt_book.render("query_generation_system", values)
-            user = self.prompt_book.render("query_generation_user", values)
-            last_system, last_user = system, user
-            if self._estimate_tokens(system, user) <= self.config.llm.max_prompt_tokens:
-                return system, user
-            if memory_limit > 500:
-                memory_limit = max(500, int(memory_limit * 0.6))
-            elif profile_limit > 1200:
-                profile_limit = max(1200, int(profile_limit * 0.6))
-            else:
-                break
-        return last_system, last_user
-
-    def chat_json(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> dict[str, Any]:
-        estimated = self._estimate_tokens(system_prompt, user_prompt)
-        if estimated > self.config.llm.max_prompt_tokens:
-            raise LLMResponseError(
-                f"Refusing to send over-budget LLM request: estimated_prompt_tokens={estimated}, allowed_prompt_tokens={self.config.llm.max_prompt_tokens}"
-            )
-
+    def chat_json(self, system_prompt: str, user_prompt: str, temperature: float) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.config.llm.model,
             "messages": [
@@ -206,7 +134,6 @@ class LocalLLMClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
 
         if self.config.llm.response_format_type:
@@ -240,18 +167,10 @@ class LocalLLMClient:
             )
 
         if response.status_code >= 400:
-            estimated = self._estimate_tokens(system_prompt, user_prompt)
             raise LLMResponseError(
                 "LLM HTTP request failed",
                 status_code=response.status_code,
-                response_text=(
-                    response.text
-                    + f" | estimated_prompt_tokens={estimated}"
-                    + f" | allowed_prompt_tokens={self.config.llm.max_prompt_tokens}"
-                    + f" | configured_context_window_tokens={self.config.llm.context_window_tokens}"
-                    + f" | automatic_safety_margin_tokens={self.config.llm.prompt_safety_margin_tokens}"
-                    + f" | configured_output_tokens={max_tokens}"
-                ),
+                response_text=response.text,
             )
 
         try:
@@ -273,20 +192,42 @@ class LocalLLMClient:
     def analyze_page(
         self,
         snapshot: PageSnapshot,
-        candidate_links: list[LinkCandidate],
+        links_with_context: list[dict[str, str]],
         memory_summary: str,
     ) -> PageDecision:
-        system, user = self._render_page_prompts(snapshot, candidate_links, memory_summary)
+        system, user = self._render_page_prompts(snapshot, links_with_context, memory_summary)
         return page_decision_from_dict(
-            self.chat_json(system, user, self.config.llm.temperature, self.config.llm.max_tokens)
+            self.chat_json(system, user, self.config.llm.temperature)
         )
 
-    def generate_queries(self, memory_summary: str, run_summary: str) -> list[QuerySuggestion]:
-        system, user = self._render_query_prompts(memory_summary, run_summary)
-        data = self.chat_json(
-            system,
-            user,
-            self.config.exploration.generated_query_temperature,
-            self.config.llm.max_tokens,
-        )
-        return query_suggestions_from_dict(data)
+    def _estimate_prompt_size(self, system: str, user: str) -> int:
+        """Estimate the number of tokens in the prompt using char/4 heuristic."""
+        total_chars = len(system) + len(user)
+        # Add ~3 tokens for the system/user role markers
+        return total_chars // 4 + 6
+
+    def classify_links_batch(
+        self,
+        snapshot: PageSnapshot,
+        links_with_context: list[dict[str, str]],
+        memory_summary: str,
+    ) -> PageDecision:
+        """Classify a batch of links and return the PageDecision."""
+        system, user = self._render_page_prompts(snapshot, links_with_context, memory_summary)
+        estimated = self._estimate_prompt_size(system, user)
+        max_allowed = self.config.llm.context_window_tokens - 3000
+        if estimated > max_allowed:
+            raise ContextWindowExceeded(
+                f"Prompt size estimate {estimated} tokens exceeds available budget {max_allowed} tokens. "
+                f"Reduce batch_size_for_llm or link page_context size."
+            )
+        decision = self.analyze_page(snapshot, links_with_context, memory_summary)
+        # The LLM prompt explicitly omits URLs (see prompts.yaml:58). Inject them
+        # from links_with_context using the classification index.
+        ctx_by_index = {int(item["index"]): item["url"] for item in links_with_context}
+        for c in decision.link_classifications:
+            if not c.url and c.index in ctx_by_index:
+                c.url = ctx_by_index[c.index]
+        return decision
+
+

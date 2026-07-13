@@ -415,7 +415,7 @@ The agent has no usable starting URLs and did not enqueue bootstrap search URLs.
 
 ```yaml
 exploration:
-  seed_search_when_empty: true
+  seeding_mode: both
 ```
 
 Also check that `config/seeds.txt` contains active URLs. Stale frontier state is normally cleared automatically because `run.reset_frontier_on_start` defaults to `true`. For a completely clean run, remove the database and exported files:

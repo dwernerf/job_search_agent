@@ -6,8 +6,8 @@ from typing import Any
 
 from .config import JobAgentConfig
 from .language import multilingual_relevance_terms
-from .models import JobMatch, LinkCandidate, PageDecision, PageSnapshot, QuerySuggestion, as_text, clamp_int
-from .urltools import clean_url, denied_by_safety, link_hint_score, same_domain
+from .models import JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot, as_text
+from .urltools import clean_url, denied_by_safety
 
 
 def compact_text(text: str, config: JobAgentConfig) -> str:
@@ -37,26 +37,26 @@ def rank_candidate_links(snapshot: PageSnapshot, config: JobAgentConfig) -> list
     ranked: list[LinkCandidate] = []
     seen: set[str] = set()
 
-    for link in snapshot.links[: config.crawler.max_raw_links_retained]:
-        url = clean_url(link.url, snapshot.final_url or snapshot.url, config)
+    for raw_link in snapshot.links:
+        url = clean_url(raw_link.url, snapshot.final_url or snapshot.url, config)
         if not url or url in seen:
             continue
 
-        text = re.sub(r"\s+", " ", link.text or "").strip()
+        text = re.sub(r"\s+", " ", raw_link.text or "").strip()
         if denied_by_safety(url, text, config):
             continue
 
-        score, reason = link_hint_score(url, text, config)
-        if score <= 0:
-            continue
-        if same_domain(url, snapshot.final_url or snapshot.url):
+        score = 0.0
+        reason = ""
+
+        if url == (snapshot.final_url or snapshot.url):
             score += 0.25
 
         seen.add(url)
-        ranked.append(LinkCandidate(text=text[:240], url=url, score=score, reason=reason))
+        ranked.append(LinkCandidate(text=text, url=url, score=score, reason=reason))
 
     ranked.sort(key=lambda x: x.score, reverse=True)
-    return ranked[: config.crawler.max_links_per_page_for_llm]
+    return ranked
 
 
 def strip_llm_noise(raw: str) -> str:
@@ -93,42 +93,36 @@ def page_decision_from_dict(data: dict[str, Any]) -> PageDecision:
             company=as_text(item.get("company"), 200),
             location=as_text(item.get("location"), 200),
             url=as_text(item.get("url"), 1500),
-            fit_score=clamp_int(item.get("fit_score"), 0, 100),
+            fit_score=int(item.get("fit_score") or 0),
             reason=as_text(item.get("reason"), 800),
             evidence=as_text(item.get("evidence"), 800),
             posting_language=as_text(item.get("posting_language") or item.get("language"), 80),
-            score_source=as_text(item.get("score_source"), 80) or "llm",
-            score_basis=as_text(item.get("score_basis"), 1000),
         )
         if job.title and job.url:
             jobs.append(job)
 
-    follow_urls = []
-    for value in data.get("follow_urls", []) or []:
-        if isinstance(value, str) and value.strip():
-            follow_urls.append(value.strip())
+    link_classifications = []
+    for item in data.get("link_classifications", []) or []:
+        if not isinstance(item, dict):
+            continue
+        classification = LinkClassification(
+            index=int(item.get("index", 0)),
+            type=item.get("type", "skip"),
+            fit_score=int(item.get("fit_score") or 0),
+            title=as_text(item.get("title"), 300),
+            company=as_text(item.get("company"), 200),
+            location=as_text(item.get("location"), 200),
+            evidence=as_text(item.get("evidence"), 800),
+            reason=as_text(item.get("reason"), 800),
+        )
+        link_classifications.append(classification)
 
     return PageDecision(
         jobs=jobs,
-        follow_urls=list(dict.fromkeys(follow_urls)),
-        source_quality=clamp_int(data.get("source_quality"), 0, 100),
+        link_classifications=link_classifications,
+        source_quality=int(data.get("source_quality") or 0),
         source_notes=as_text(data.get("source_notes"), 1000),
     )
 
 
-def query_suggestions_from_dict(data: dict[str, Any]) -> list[QuerySuggestion]:
-    suggestions: list[QuerySuggestion] = []
-    for item in data.get("queries", []) or []:
-        if isinstance(item, str):
-            query = item.strip()
-            reason = ""
-        elif isinstance(item, dict):
-            query = str(item.get("query") or "").strip()
-            reason = str(item.get("reason") or "").strip()
-        else:
-            continue
 
-        if query:
-            suggestions.append(QuerySuggestion(query=query[:400], reason=reason[:800]))
-
-    return suggestions

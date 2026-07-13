@@ -10,7 +10,7 @@ def test_profile_derives_target_roles_and_avoid_terms(loaded_sample):
     cfg = loaded_sample.config
     assert "Procurement Manager" in cfg.target.roles
     assert "Supplier Quality Manager" in cfg.target.roles
-    assert "procurement" in [x.casefold() for x in cfg.score_consistency.target_role_terms]
+    assert any("procurement" in x.casefold() for x in cfg.target.roles)
     assert any("sales representative" == x.casefold() for x in cfg.matching.avoid_terms)
 
 
@@ -46,7 +46,7 @@ def test_minimal_yaml_can_load_because_terms_come_from_profile(tmp_path: Path):
     )
     (tmp_path / "config" / "seeds.txt").write_text("", encoding="utf-8")
     (tmp_path / "config" / "prompts.yaml").write_text(
-        "page_analysis_system: 'Return JSON only.'\npage_analysis_user: '$profile'\nquery_generation_system: 'Return JSON only.'\nquery_generation_user: '$profile'\n",
+        "page_analysis_system: 'Return JSON only.'\npage_analysis_user: '$profile'\n",
         encoding="utf-8",
     )
     (tmp_path / "config" / "config.yaml").write_text(
@@ -55,5 +55,5 @@ def test_minimal_yaml_can_load_because_terms_come_from_profile(tmp_path: Path):
     )
     cfg = load_config(tmp_path / "config" / "config.yaml").config
     assert "Supplier Quality Manager" in cfg.target.roles
-    assert "supplier quality" in [x.casefold() for x in cfg.score_consistency.target_role_terms]
+    assert "strategic buyer" in [x.casefold() for x in cfg.target.roles]
     assert any(x.casefold() == "sales representative" for x in cfg.matching.avoid_terms)

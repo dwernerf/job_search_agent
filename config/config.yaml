@@ -47,7 +47,7 @@ llm:
   model: local
 
   # Read timeout for one LLM request. 400s is useful for larger Qwen runs on CPU.
-  timeout_seconds: 400
+  timeout_seconds: 1000
 
   # Short startup check so the crawler does not browse hundreds of pages while
   # the local model server is offline.
@@ -64,10 +64,7 @@ llm:
   temperature: 0.1
 
   # Set this to the context size configured in llama.cpp.
-  context_window_tokens: 12000
-
-  # Maximum output tokens. This includes thinking tokens when thinking_enabled is true.
-  output_tokens: 5000
+  context_window_tokens: 150000
 
   # false is the safer default for strict JSON extraction. Set true only if you
   # want the model to spend more tokens reasoning and your server returns clean JSON.
@@ -87,15 +84,12 @@ run:
   # It does not delete jobs or learned source memory.
   reset_frontier_on_start: true
 
-  # Maximum pages opened per run.
-  max_pages: 500
-
-  # Maximum link depth from seed/search pages.
-  max_depth: 3
-
   # Delay between page visits. Kept below 1 second per your request.
   min_delay_seconds: 0.2
   max_delay_seconds: 0.8
+
+  # When true, log each link's full page_context at debug level after LLM classification.
+  debug_mode: true
 
   # Export partial results while the run is still active.
   export_after_each_page: true
@@ -103,17 +97,8 @@ run:
   export_on_interrupt: true
 
 crawler:
-  # false allows search result pages; true enforces robots.txt strictly.
-  respect_robots_txt: false
-
-  # Retry pages blocked in earlier runs if robots are now disabled.
-  retry_previously_blocked_when_robots_disabled: true
-
   # Retry pages that failed in earlier runs.
   retry_error_pages: true
-
-  # Maximum candidate links sent to the LLM per loaded page.
-  max_links_per_page_for_llm: 80
 
   # Prevent one source from consuming the whole run.
   max_pages_per_source_key: 25
@@ -123,25 +108,17 @@ crawler:
   # unless you intentionally want domain expansion.
   max_career_domain_expansions_per_page: 0
 
-matching:
-  # Jobs below this final calibrated score are not saved.
-  min_fit_score_to_save: 55
+  # Number of links to send to the LLM per batch. Each link includes its own
+  # fetched page_context. If the batch exceeds the context window, the last
+  # link is dropped and the batch retried until it fits.
+  batch_size_for_llm: 30
 
-  # Used for source-memory rewards and final summaries.
-  high_fit_score: 80
+scoring:
+  # Minimum fit score (0-100) for a job to be exported/saved. Jobs below this are dropped.
+  min_score_to_export: 45
 
-score_consistency:
-  # The LLM may score jobs, but Python caps obviously inconsistent scores.
-  enabled: true
-
-  # A saved job must contain a target-role signal derived from profile.md.
-  require_target_role_signal: true
-
-  # Caps for inconsistent or uncertain LLM scores.
-  no_target_role_cap: 34
-  irrelevant_role_cap: 29
-  avoid_term_cap: 39
-  unclear_location_cap: 44
+  # Fit score threshold (0-100) that triggers a high-fit bonus (boosts source quality).
+  high_fit_score_threshold: 80
 
 companies:
   # Drop exported jobs from these companies. Leave empty unless needed.
@@ -162,9 +139,6 @@ exploration:
   # true lets the agent discover URLs beyond seeds.txt.
   enabled: true
 
-  # If seeds.txt is empty, create profile-driven exploratory web-search URLs.
-  seed_search_when_empty: true
-
   # Direct search endpoints for exploratory profile searches.
   # Avoid generic search engines by default because they frequently return 403
   # or CAPTCHA pages in unattended local runs.
@@ -172,36 +146,9 @@ exploration:
   # Default is read from config/intent.yaml on startup.
   search_url_templates: []
 
-  # For job-detail URLs, require the URL/link text to contain a profile-derived
-  # target-role signal before spending an LLM call.
-  require_role_signal_for_job_detail_urls: true
-
-  # Apply the same role-signal filter to human-readable job URLs on company
-  # career pages. Opaque ATS IDs can still be explored when no title is visible.
-  require_role_signal_for_human_readable_company_job_urls: true
-
-  # Drop detail-looking URLs that only contain profile exclusion terms, unless
-  # they also contain a target-role signal.
-  drop_avoid_only_job_detail_urls: true
-
-  # If the LLM fails, do not let fallback link expansion grow the queue.
-  max_follow_urls_without_llm: 0
-
-  # LLM-generated exploratory queries during a run.
-  max_generated_queries_per_run: 6
-  query_generation_every_pages: 12
-
-heuristic_extraction:
-  # Disabled by default. The LLM does extraction and scoring.
-  # Set enabled: true only if you want schema.org/job-link fallback extraction.
-  enabled: false
-  use_structured_data: true
-  use_candidate_links: true
-  max_jobs_per_page: 16
-
-  # If heuristics are enabled, avoid saving weak job-link guesses from index pages.
-  suppress_link_jobs_on_index_pages: true
-  require_detail_url_for_link_jobs: true
+  # "seeds" = seeds.txt only, "bootstrap" = query-driven searches only,
+  # "both" = populate frontier with both (deduped).
+  seeding_mode: both
 
 job_validation:
   # Drops initiative applications, invented links, city-only titles, and index pages.
@@ -225,34 +172,11 @@ job_validation:
   # Drop postings where the company matches companies.blacklist.
   drop_if_company_blacklisted: true
 
-location_radius:
-  # Enforce a hard 30 km radius for non-remote jobs.
-  # target_city, latitude, longitude, and radius_km come from config/intent.yaml at runtime.
-  enabled: true
-
-  # true drops jobs outside the radius instead of only lowering their score.
-  hard_drop_outside_radius: true
-
-  # Broad locations like "Germany" or "Bavaria" are not enough for non-remote jobs.
-  require_location_for_non_remote: true
-
-  # Keep jobs that clearly say remote/homeoffice from Germany.
-  allow_remote_if_country_match: true
-
-  # Prevent exploration URLs that visibly point to known out-of-radius cities.
-  filter_exploration_urls: true
-  drop_urls_with_outside_city: true
-
-  # For URL paths with country/language segments, keep German-market paths and
-  # reject obvious foreign-market paths such as /ch/, /at/, /zh_cn/.
-  allowed_country_url_segments: [de, de-de, de_de, deutschland, germany]
-  blocked_country_url_segments: [at, ch, cn, tw, zh_cn, zh_tw, fr, it, es, nl, pl, cz]
-
 logging:
   # Only two levels are supported:
   #   info  = structured step/result logs
   #   debug = info plus skipped URLs and low-level details
-  level: info
+  level: debug
   console: true
   file: true
 

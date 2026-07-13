@@ -31,10 +31,6 @@ companies:
 
 # --- Search tools ---
 search:
-  # Direct search endpoints for exploratory profile searches.
-  # Avoid generic search engines by default because they frequently return 403
-  # or CAPTCHA pages in unattended local runs.
+  # Direct search endpoints for bootstrapped searches.
   search_url_templates:
-    - https://www.linkedin.com/jobs/search/?keywords={query}&location=Munich%2C%20Bavaria%2C%20Germany
-    - https://www.stepstone.de/jobs/{query_slug}/in-m%C3%BCnchen
-    - https://www.stellenanzeigen.de/jobs/{query_slug}/muenchen
+    - https://www.google.com/search?q={query}

@@ -4,7 +4,7 @@ from jobagent.discover import bootstrap_queries
 from jobagent.extract import compact_text, page_decision_from_dict, rank_candidate_links
 from jobagent.language import bootstrap_template_values, language_policy_summary, multilingual_role_terms
 from jobagent.models import LinkCandidate, PageSnapshot
-from jobagent.urltools import career_candidate_urls, denied_by_safety, link_hint_score
+from jobagent.urltools import career_candidate_urls, denied_by_safety
 
 
 def test_multilingual_config_is_active(loaded_sample):
@@ -50,11 +50,22 @@ def test_bootstrap_queries_include_german_english_and_mixed_terms(loaded_sample)
     assert any("Strategischer Einkäufer" in query or "Supplier Quality Manager München" in query for query in queries)
 
 
-def test_link_hint_score_uses_multilingual_terms_from_config(loaded_sample):
+def test_link_classification_works_with_multilingual_terms(loaded_sample):
     cfg = loaded_sample.config
-    score, reason = link_hint_score("https://firma.test/de/stellenangebote", "Strategischer Einkäufer München", cfg)
-    assert score > 0
-    assert "stellen" in reason.casefold() or "Strategischer Einkäufer" in reason
+    snapshot = PageSnapshot(
+        url="https://firma.test",
+        final_url="https://firma.test",
+        title="Firma",
+        text="",
+        links=[
+            LinkCandidate(text="Karriere", url="/karriere"),
+            LinkCandidate(text="Offene Stellen", url="/stellenangebote"),
+        ],
+    )
+    ranked = rank_candidate_links(snapshot, cfg)
+    urls = [item.url for item in ranked]
+    assert "https://firma.test/karriere" in urls
+    assert "https://firma.test/stellenangebote" in urls
 
 
 def test_career_candidate_urls_include_german_paths(loaded_sample):

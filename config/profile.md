@@ -64,6 +64,7 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - laser components
 - optics
 - photonics
+- defence
 - laser technology
 - optical assemblies
 - precision components

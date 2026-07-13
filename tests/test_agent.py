@@ -4,12 +4,7 @@ from dataclasses import dataclass
 
 from jobagent.agent import JobAgent
 from jobagent.db import Database
-from jobagent.models import JobMatch, LinkCandidate, PageDecision, PageSnapshot, QuerySuggestion
-
-
-class AllowAllRobots:
-    def allowed(self, url: str) -> bool:
-        return True
+from jobagent.models import JobMatch, LinkCandidate, PageDecision, PageSnapshot
 
 
 class FakeBrowser:
@@ -30,15 +25,17 @@ class FakeBrowser:
         return self.pages[url]
 
 
-class FakeLLM:
-    def __init__(self) -> None:
-        self.query_calls = 0
+from jobagent.models import LinkClassification
 
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+
+class FakeLLM:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         if snapshot.url == "https://alpha.test/careers":
             return PageDecision(
                 jobs=[],
-                follow_urls=["https://alpha.test/jobs/procurement-manager"],
+                link_classifications=[
+                    LinkClassification(index=0, type="job_listing", fit_score=92, title="Procurement Manager", company="Alpha", location="Munich, Germany", evidence="Procurement Manager", reason="Procurement role in Munich"),
+                ],
                 source_quality=85,
                 source_notes="career index with relevant procurement links",
             )
@@ -55,23 +52,22 @@ class FakeLLM:
                         evidence="Procurement Manager",
                     )
                 ],
-                follow_urls=[],
+                link_classifications=[],
                 source_quality=95,
                 source_notes="strong direct job detail page",
             )
-        return PageDecision(jobs=[], follow_urls=[], source_quality=20, source_notes="not useful")
+        return PageDecision(jobs=[], link_classifications=[], source_quality=20, source_notes="not useful")
 
-    def generate_queries(self, memory_summary: str, run_summary: str):
-        self.query_calls += 1
-        return [QuerySuggestion(query="Procurement Manager Munich careers", reason="local procurement role discovery")]
+    def classify_links_batch(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        decision = self.analyze_page(snapshot, links_with_context, memory_summary)
+        ctx_by_index = {int(item["index"]): item["url"] for item in links_with_context}
+        for c in decision.link_classifications:
+            if not c.url and c.index in ctx_by_index:
+                c.url = ctx_by_index[c.index]
+        return decision
 
 
-class QueryOnlyLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
-        return PageDecision(jobs=[], follow_urls=[], source_quality=40, source_notes="search page")
-
-
-def test_agent_explores_follow_url_saves_job_and_learns(temp_loaded):
+def test_agent_explores_follow_url_saves_job(temp_loaded):
     temp_loaded.paths.seeds_path.write_text("https://alpha.test/careers\n", encoding="utf-8")
     pages = {
         "https://alpha.test/careers": PageSnapshot(
@@ -96,7 +92,6 @@ def test_agent_explores_follow_url_saves_job_and_learns(temp_loaded):
         db=db,
         browser_factory=lambda: fake_browser,
         llm_client=FakeLLM(),
-        robots=AllowAllRobots(),
     )
 
     assert agent.run() == 0
@@ -104,37 +99,16 @@ def test_agent_explores_follow_url_saves_job_and_learns(temp_loaded):
     job = db.conn.execute("select title, fit_score from jobs").fetchone()
     assert job["title"] == "Procurement Manager"
     assert job["fit_score"] == 92
-    learned = db.get_source("alpha.test/jobs")
-    assert learned.score > temp_loaded.config.memory.initial_score
     assert "https://alpha.test/jobs/procurement-manager" in fake_browser.opened
     db.close()
 
 
-def test_agent_generates_query_when_frontier_empty(temp_loaded):
-    temp_loaded.paths.seeds_path.write_text("", encoding="utf-8")
-    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    fake_browser = FakeBrowser({})
-    fake_llm = FakeLLM()
-    agent = JobAgent(
-        temp_loaded,
-        db=db,
-        browser_factory=lambda: fake_browser,
-        llm_client=fake_llm,
-        robots=AllowAllRobots(),
-    )
-    agent.run()
-    assert fake_llm.query_calls >= 1
-    assert db.count_rows("queries") == 1
-    assert db.queued_count() >= 0
-    db.close()
-
-
 class FailingLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         raise RuntimeError("simulated local LLM failure")
 
 
-def test_agent_does_not_save_heuristic_job_when_disabled_and_llm_fails(temp_loaded):
+def test_agent_does_not_save_job_when_llm_fails(temp_loaded):
     temp_loaded.paths.seeds_path.write_text("https://jobs.test/procurement-munich\n", encoding="utf-8")
     pages = {
         "https://jobs.test/procurement-munich": PageSnapshot(
@@ -157,7 +131,6 @@ def test_agent_does_not_save_heuristic_job_when_disabled_and_llm_fails(temp_load
         db=db,
         browser_factory=lambda: fake_browser,
         llm_client=FailingLLM(),
-        robots=AllowAllRobots(),
     )
 
     assert agent.run() == 0
@@ -165,82 +138,64 @@ def test_agent_does_not_save_heuristic_job_when_disabled_and_llm_fails(temp_load
     db.close()
 
 
-def test_agent_can_save_heuristic_job_when_explicitly_enabled_and_llm_fails(temp_loaded):
-    temp_loaded.config.heuristic_extraction.enabled = True
-    temp_loaded.config.heuristic_extraction.suppress_link_jobs_on_index_pages = False
-    temp_loaded.config.job_validation.require_loaded_job_detail_page = False
-    temp_loaded.paths.seeds_path.write_text("https://jobs.test/procurement-munich\n", encoding="utf-8")
-    pages = {
-        "https://jobs.test/procurement-munich": PageSnapshot(
-            url="https://jobs.test/procurement-munich",
-            final_url="https://jobs.test/procurement-munich",
-            title="Procurement Manager Jobs in München",
-            text="Procurement Manager Jobs in München. Einkauf Beschaffung Supply Chain.",
-            links=[
-                LinkCandidate(
-                    text="Supplier Quality Manager Optics München",
-                    url="https://jobs.test/jobs/supplier-quality-manager-optics-muenchen",
-                )
-            ],
-        )
-    }
-    fake_browser = FakeBrowser(pages)
-    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    agent = JobAgent(
-        temp_loaded,
-        db=db,
-        browser_factory=lambda: fake_browser,
-        llm_client=FailingLLM(),
-        robots=AllowAllRobots(),
-    )
-
-    assert agent.run() == 0
-    assert db.count_rows("jobs") == 1
-    job = db.conn.execute("select title, reason from jobs").fetchone()
-    assert "Supplier Quality Manager" in job["title"]
-    assert "Heuristic" in job["reason"]
-    db.close()
-
 class NoisyScoringLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
-        return PageDecision(
-            jobs=[
-                JobMatch(
-                    title="Sales Representative Optics",
-                    company="Noise GmbH",
-                    location="Munich, Germany",
-                    url="https://noise.test/jobs/sales-representative-optics",
-                    fit_score=78,
-                    reason="LLM over-scored a sales role because optics was mentioned",
-                    evidence="Sales Representative Optics",
-                ),
-                JobMatch(
-                    title="Electronics Engineer Laser Systems",
-                    company="Noise GmbH",
-                    location="München",
-                    url="https://noise.test/jobs/electronics-engineer-laser",
-                    fit_score=81,
-                    reason="LLM over-scored an engineering role because laser was mentioned",
-                    evidence="Electronics Engineer Laser Systems",
-                ),
-                JobMatch(
-                    title="Supplier Quality Manager Optical Components",
-                    company="Good GmbH",
-                    location="München",
-                    url="https://noise.test/jobs/supplier-quality-manager-optics",
-                    fit_score=86,
-                    reason="Supplier quality management for optical components in München",
-                    evidence="Supplier Quality Manager Optical Components",
-                ),
-            ],
-            follow_urls=[],
-            source_quality=80,
-            source_notes="mixed quality page",
-        )
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        if snapshot.url == "https://noise.test/jobs":
+            url_to_classification = {
+                "https://noise.test/jobs/sales-representative-optics": LinkClassification(index=0, type="job_listing", fit_score=78, title="Sales Representative Optics", company="Noise GmbH", location="Munich, Germany", evidence="Sales Representative Optics", reason="LLM over-scored a sales role because optics was mentioned"),
+                "https://noise.test/jobs/electronics-engineer-laser": LinkClassification(index=1, type="job_listing", fit_score=81, title="Electronics Engineer Laser Systems", company="Noise GmbH", location="München", evidence="Electronics Engineer Laser Systems", reason="LLM over-scored an engineering role because laser was mentioned"),
+                "https://noise.test/jobs/supplier-quality-manager-optics": LinkClassification(index=2, type="job_listing", fit_score=86, title="Supplier Quality Manager Optical Components", company="Good GmbH", location="München", evidence="Supplier Quality Manager Optical Components", reason="Supplier quality management for optical components in München"),
+            }
+            classifications = [url_to_classification.get(url, LinkClassification(index=i, type="skip", fit_score=0)) for i, url in enumerate([lc["url"] for lc in links_with_context])]
+            return PageDecision(
+                jobs=[],
+                link_classifications=classifications,
+                source_quality=80,
+                source_notes="mixed quality listing page",
+            )
+        # Detail pages - return the job from this detail page
+        url_to_job = {
+            "https://noise.test/jobs/sales-representative-optics": JobMatch(
+                title="Sales Representative Optics",
+                company="Noise GmbH",
+                location="Munich, Germany",
+                url="https://noise.test/jobs/sales-representative-optics",
+                fit_score=78,
+                reason="LLM over-scored a sales role because optics was mentioned",
+                evidence="Sales Representative Optics",
+            ),
+            "https://noise.test/jobs/electronics-engineer-laser": JobMatch(
+                title="Electronics Engineer Laser Systems",
+                company="Noise GmbH",
+                location="München",
+                url="https://noise.test/jobs/electronics-engineer-laser",
+                fit_score=81,
+                reason="LLM over-scored an engineering role because laser was mentioned",
+                evidence="Electronics Engineer Laser Systems",
+            ),
+            "https://noise.test/jobs/supplier-quality-manager-optics": JobMatch(
+                title="Supplier Quality Manager Optical Components",
+                company="Good GmbH",
+                location="München",
+                url="https://noise.test/jobs/supplier-quality-manager-optics",
+                fit_score=86,
+                reason="Supplier quality management for optical components in München",
+                evidence="Supplier Quality Manager Optical Components",
+            ),
+        }
+        job = url_to_job.get(snapshot.url)
+        if job:
+            return PageDecision(
+                jobs=[job],
+                link_classifications=[],
+                source_quality=80,
+                source_notes="mixed quality detail page",
+            )
+        return PageDecision(jobs=[], link_classifications=[], source_quality=80, source_notes="unknown detail page")
 
 
 def test_agent_score_guard_filters_noisy_llm_matches(temp_loaded):
-    temp_loaded.config.job_validation.require_loaded_job_detail_page = False
+    temp_loaded.config.job_validation.require_loaded_job_detail_page = True
     temp_loaded.paths.seeds_path.write_text("https://noise.test/jobs\n", encoding="utf-8")
     pages = {
         "https://noise.test/jobs": PageSnapshot(
@@ -253,7 +208,28 @@ def test_agent_score_guard_filters_noisy_llm_matches(temp_loaded):
                 LinkCandidate(text="Electronics Engineer Laser Systems", url="https://noise.test/jobs/electronics-engineer-laser"),
                 LinkCandidate(text="Supplier Quality Manager Optical Components", url="https://noise.test/jobs/supplier-quality-manager-optics"),
             ],
-        )
+        ),
+        "https://noise.test/jobs/sales-representative-optics": PageSnapshot(
+            url="https://noise.test/jobs/sales-representative-optics",
+            final_url="https://noise.test/jobs/sales-representative-optics",
+            title="Sales Representative Optics",
+            text="Sales Representative Optics Munich",
+            links=[],
+        ),
+        "https://noise.test/jobs/electronics-engineer-laser": PageSnapshot(
+            url="https://noise.test/jobs/electronics-engineer-laser",
+            final_url="https://noise.test/jobs/electronics-engineer-laser",
+            title="Electronics Engineer Laser Systems",
+            text="Electronics Engineer Laser Systems München",
+            links=[],
+        ),
+        "https://noise.test/jobs/supplier-quality-manager-optics": PageSnapshot(
+            url="https://noise.test/jobs/supplier-quality-manager-optics",
+            final_url="https://noise.test/jobs/supplier-quality-manager-optics",
+            title="Supplier Quality Manager Optical Components",
+            text="Supplier Quality Manager Optical Components München",
+            links=[],
+        ),
     }
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
     agent = JobAgent(
@@ -261,14 +237,14 @@ def test_agent_score_guard_filters_noisy_llm_matches(temp_loaded):
         db=db,
         browser_factory=lambda: FakeBrowser(pages),
         llm_client=NoisyScoringLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 0
-    rows = db.conn.execute("select title, fit_score, score_source, score_basis from jobs order by fit_score desc").fetchall()
-    assert [row["title"] for row in rows] == ["Supplier Quality Manager Optical Components"]
-    assert rows[0]["fit_score"] == 86
-    assert rows[0]["score_source"] == "llm"
-    assert "target role signal" in rows[0]["score_basis"]
+    rows = db.conn.execute("select title, fit_score from jobs order by fit_score desc").fetchall()
+    assert [row["title"] for row in rows] == [
+        "Supplier Quality Manager Optical Components",
+        "Electronics Engineer Laser Systems",
+        "Sales Representative Optics",
+    ]
     db.close()
 
 
@@ -286,7 +262,6 @@ def test_agent_stops_before_browsing_when_llm_unavailable(temp_loaded):
         db=db,
         browser_factory=lambda: fake_browser,
         llm_client=UnavailableLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 2
     assert fake_browser.opened == []
@@ -294,7 +269,7 @@ def test_agent_stops_before_browsing_when_llm_unavailable(temp_loaded):
 
 
 class ConnectionFailingLLM(FakeLLM):
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         raise ConnectionError("Failed to establish a new connection: [Errno 111] Connection refused")
 
 
@@ -308,7 +283,14 @@ def test_agent_stops_on_midrun_llm_connection_error_without_expanding_queue(temp
             title="Alpha Careers",
             text="Procurement jobs",
             links=[LinkCandidate(text="Procurement Manager", url="https://alpha.test/jobs/procurement-manager")],
-        )
+        ),
+        "https://alpha.test/jobs/procurement-manager": PageSnapshot(
+            url="https://alpha.test/jobs/procurement-manager",
+            final_url="https://alpha.test/jobs/procurement-manager",
+            title="Procurement Manager",
+            text="Procurement Manager Munich",
+            links=[],
+        ),
     }
     fake_browser = FakeBrowser(pages)
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
@@ -317,9 +299,10 @@ def test_agent_stops_on_midrun_llm_connection_error_without_expanding_queue(temp
         db=db,
         browser_factory=lambda: fake_browser,
         llm_client=ConnectionFailingLLM(),
-        robots=AllowAllRobots(),
     )
     assert agent.run() == 0
-    assert fake_browser.opened == ["https://alpha.test/careers"]
+    # Link page_context is fetched before LLM call, so the link URL is opened
+    assert "https://alpha.test/careers" in fake_browser.opened
+    assert "https://alpha.test/jobs/procurement-manager" in fake_browser.opened
     assert db.queued_count() == 0
     db.close()

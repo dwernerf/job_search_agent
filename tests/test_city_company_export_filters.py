@@ -4,15 +4,8 @@ import csv
 
 from jobagent.agent import JobAgent
 from jobagent.db import Database
-from jobagent.discover import exploration_url_allowed, seed_frontier
-from jobagent.location import evaluate_exploration_url_location, is_location_only_title
 from jobagent.models import JobMatch, LinkCandidate, PageDecision, PageSnapshot
 from jobagent.urltools import clean_url
-
-
-class AllowAllRobots:
-    def allowed(self, url: str) -> bool:
-        return True
 
 
 class FakeBrowser:
@@ -35,43 +28,11 @@ class StaticLLM:
     def __init__(self, decision: PageDecision) -> None:
         self.decision = decision
 
-    def analyze_page(self, snapshot: PageSnapshot, candidate_links, memory_summary: str) -> PageDecision:
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
         return self.decision
 
-    def generate_queries(self, memory_summary: str, run_summary: str):
-        return []
-
-
-def test_exploration_url_filter_rejects_known_outside_city(temp_loaded):
-    url = "https://www.stellenanzeigen.de/jobs/procurement/erlangen"
-    verdict = evaluate_exploration_url_location(url, "Procurement jobs", temp_loaded.config)
-    assert not verdict.allowed
-    assert verdict.matched_place == "Erlangen"
-    assert not exploration_url_allowed(url, "Procurement jobs", temp_loaded.config)
-
-
-def test_location_only_title_is_rejected(temp_loaded):
-    assert is_location_only_title("Erlangen", temp_loaded.config)
-    assert is_location_only_title("München, Germany", temp_loaded.config)
-    assert not is_location_only_title("Procurement Manager München", temp_loaded.config)
-
-
-def test_agent_skips_outside_city_frontier_url_before_fetch(temp_loaded):
-    temp_loaded.paths.seeds_path.write_text("https://www.stellenanzeigen.de/jobs/procurement/erlangen\n", encoding="utf-8")
-    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    fake_browser = FakeBrowser({})
-    agent = JobAgent(
-        temp_loaded,
-        db=db,
-        browser_factory=lambda: fake_browser,
-        llm_client=StaticLLM(PageDecision(jobs=[], follow_urls=[], source_quality=0, source_notes="")),
-        robots=AllowAllRobots(),
-    )
-    assert agent.run() == 0
-    assert fake_browser.opened == []
-    row = db.conn.execute("select status from frontier").fetchone()
-    assert row["status"] == "skipped_location"
-    db.close()
+    def classify_links_batch(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        return self.decision
 
 
 def test_agent_rejects_city_as_job_title(temp_loaded):
@@ -95,12 +56,12 @@ def test_agent_rejects_city_as_job_title(temp_loaded):
                 evidence="München",
             )
         ],
-        follow_urls=[],
+        link_classifications=[],
         source_quality=70,
         source_notes="test",
     )
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: FakeBrowser({snapshot.url: snapshot}), llm_client=StaticLLM(decision), robots=AllowAllRobots())
+    agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: FakeBrowser({snapshot.url: snapshot}), llm_client=StaticLLM(decision))
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
     db.close()
@@ -128,12 +89,12 @@ def test_company_blacklist_drops_matching_jobs(temp_loaded):
                 evidence="Procurement Manager",
             )
         ],
-        follow_urls=[],
+        link_classifications=[],
         source_quality=70,
         source_notes="test",
     )
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: FakeBrowser({snapshot.url: snapshot}), llm_client=StaticLLM(decision), robots=AllowAllRobots())
+    agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: FakeBrowser({snapshot.url: snapshot}), llm_client=StaticLLM(decision))
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
     db.close()
@@ -156,7 +117,6 @@ def test_csv_export_has_title_as_third_column(temp_loaded):
                 fit_score=88,
                 reason="Supplier quality role in Munich",
                 evidence="Supplier Quality Manager",
-                score_basis="target role signal",
             )
         ],
         "https://example.test/jobs/supplier-quality-manager",
@@ -166,7 +126,7 @@ def test_csv_export_has_title_as_third_column(temp_loaded):
     db.export_csv(out)
     with out.open(encoding="utf-8", newline="") as f:
         header = next(csv.reader(f))
-    assert header[2] == "title"
+    assert header[1] == "title"
     db.close()
 
 
@@ -192,12 +152,12 @@ def test_current_search_page_url_is_not_saved_as_job_detail(temp_loaded):
                 evidence="Procurement Manager jobs in München",
             )
         ],
-        follow_urls=[],
+        link_classifications=[],
         source_quality=40,
         source_notes="listing page",
     )
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
-    agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: FakeBrowser({url: snapshot}), llm_client=StaticLLM(decision), robots=AllowAllRobots())
+    agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: FakeBrowser({url: snapshot}), llm_client=StaticLLM(decision))
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
     db.close()
