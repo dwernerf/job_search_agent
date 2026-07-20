@@ -30,30 +30,24 @@ page_analysis_user: |-
   Links to evaluate:
   $links_with_context
 
-  Classification gate (apply BEFORE selecting any type):
-  - For each link, read its page_context to determine if it is a job listing.
-  - Exclude links that clearly lead to footer, navigation, about-company, legal,
-    cookie, login, subscription, or generic portal/company pages.
-  - Only classify as "job_listing" if the page_context contains concrete job details:
-    actual job title, employer, location, and at least some description such as
-    responsibilities, requirements, tasks, profile, benefits, or application context.
-  - If page_context is empty or shows only an error/placeholder, use "skip".
+  Classification Guidance:
+  - For each link, read its page_context to determine it Link classification type and extract data.
+
+  Link classification types:
+  - job_listing: Only classify as "job_listing" if the page_context contains concrete job details: actual job title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context. Include fit_score, title, company, location, evidence, and reason. 
+  - explore: The link is interesting for future browsing because it looks like it contains links to actual job offerings. There must be a high chance that they are located in the target search area and be relevant for the person we are looking for. fit_score = 0.
+  - skip: The link is not useful (e.g., footer, cookie policy, login, legal, generic page) Also if page_context is empty or shows only an error/placeholder, use "skip" . fit_score = 0.
 
   Return JSON only with this exact shape:
   {
     "link_classifications": [
       {"index": 0, "type": "job_listing", "fit_score": 85, "title": "Senior Software Engineer", "company": "Example Corp", "location": "Munich", "evidence": "Software engineering role in Munich", "reason": "Matches target criteria"},
-      {"index": 1, "type": "explore", "fit_score": 0, "reason": "Company career page, not a direct job listing"},
-      {"index": 2, "type": "skip", "fit_score": 0, "reason": "Footer navigation link"}
+      {"index": 1, "type": "explore", "fit_score": 0, "reason": "Example Reason"},
+      {"index": 2, "type": "skip", "fit_score": 0, "reason": "Example Reason"}
     ],
     "source_quality": 60,
     "source_notes": "concise source-quality note"
   }
-
-  Link classification types:
-  - job_listing: The link points to a concrete job posting with extractable details such as the specific role details itself: actual job title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context. Include fit_score, title, company, location, evidence, and reason. The loaded page 
-  - explore: The link is interesting for future browsing because it looks like it contains links to actual job offerings with a high chance that they are located in the target search area which and might be relevant fot the person we are looking for. fit_score = 0.
-  - skip: The link is not useful (e.g., footer, cookie policy, login, legal, generic page). fit_score = 0.
 
   IMPORTANT: Return a link_classifications entry for EVERY link provided. Never return full URLs in this field. The index corresponds to the position in the links array above. If all links are skip, return an array of skip entries.
 

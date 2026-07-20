@@ -60,6 +60,7 @@ The target market is Germany. German-language, English-language, and mixed Germa
 
 ## Relevant expertise and positive fit factors
 
+- senior position
 - optical components
 - laser components
 - optics
@@ -106,6 +107,8 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Sales Manager
 - Field Sales / Außendienst Vertrieb
 - Inside Sales
+- Team Lead
+- Department Lead
 - Account Executive
 - Key Account Manager
 - Business Development

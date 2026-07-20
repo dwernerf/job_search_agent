@@ -215,6 +215,7 @@ class JobAgent:
                                 type=c.type,
                                 fit=c.fit_score,
                                 reason=c.reason or "",
+                                chars_truncated=max(0, len((ctx_by_link_index.get(str(c.index)) or {}).get("page_context") or "") - self.config.crawler.max_page_context_chars),
                             )
 
                         # Clean candidates (blacklist + dedup) and save

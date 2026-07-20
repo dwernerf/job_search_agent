@@ -330,6 +330,7 @@ class CrawlerConfig(StrictModel):
     max_pages_per_source_key: int = Field(default=25, gt=0)
     max_career_domain_expansions_per_page: int = Field(default=4, ge=0)
     batch_size_for_llm: int = Field(default=30, gt=0)
+    max_page_context_chars: int = Field(default=5000, gt=0)
 
 
 class SafetyConfig(StrictModel):

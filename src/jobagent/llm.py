@@ -76,7 +76,7 @@ class LocalLLMClient:
                     "index": item.get("index", 0),
                     "text": item.get("text") or "",
                     "url": item.get("url") or "",
-                    "page_context": (item.get("page_context") or "")[:8000],
+                    "page_context": (item.get("page_context") or "")[:self.config.crawler.max_page_context_chars],
                 }
             else:
                 entry = {
@@ -217,7 +217,7 @@ class LocalLLMClient:
         if estimated > max_allowed:
             raise ContextWindowExceeded(
                 f"Prompt size estimate {estimated} tokens exceeds available budget {max_allowed} tokens. "
-                f"Reduce batch_size_for_llm or link page_context size."
+                f"Reduce batch_size_for_llm or max_page_context_chars."
             )
         decision = self.analyze_page(snapshot, links_with_context, memory_summary)
         # The LLM prompt explicitly omits URLs (see prompts.yaml:58). Inject them
