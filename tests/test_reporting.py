@@ -78,3 +78,25 @@ def test_action_reporter_hides_debug_only_events_at_info_level(temp_loaded):
     reporter = ActionReporter(cfg, logger, clock=FakeClock())
     reporter.action("skip_visited", url="https://example.test/jobs")
     assert "STEP skip_visited" in stream.getvalue()
+
+
+def test_action_reporter_prints_batch_complete_as_result(temp_loaded):
+    logger, stream = make_stream_logger()
+    reporter = ActionReporter(temp_loaded.config, logger, clock=FakeClock())
+
+    reporter.action(
+        "batch_complete",
+        batch="1/2",
+        saved=2,
+        high_fit=1,
+        enqueued=3,
+        queued=5,
+        source_quality=80,
+        source_notes="Relevant source",
+    )
+
+    output = stream.getvalue()
+    assert "RESULT batch_complete" in output
+    assert "batch='1/2'" in output
+    assert "saved='2'" in output
+    assert "source_notes='Relevant source'" in output

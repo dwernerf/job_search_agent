@@ -39,7 +39,7 @@ class ActionReporter:
     RESULT_EVENTS = {
         "seed_backlog",
         "page_fetched",
-        "page_analyzed",
+        "batch_complete",
         "page_complete",
         "job_validation_guard",
         "score_guard_dropped",

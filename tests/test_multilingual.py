@@ -4,7 +4,7 @@ from jobagent.discover import bootstrap_queries
 from jobagent.extract import compact_text, page_decision_from_dict
 from jobagent.language import bootstrap_template_values, language_policy_summary, multilingual_role_terms
 from jobagent.models import PageSnapshot
-from jobagent.urltools import career_candidate_urls, denied_by_safety
+from jobagent.urltools import denied_by_safety
 
 
 def test_multilingual_config_is_active(loaded_sample):
@@ -28,13 +28,6 @@ def test_bootstrap_queries_include_german_english_and_mixed_terms(loaded_sample)
     queries = bootstrap_queries(cfg)
     assert any("procurement" in query.lower() or "purchasing" in query.lower() for query in queries)
     assert any("Munich" in query for query in queries)
-
-
-def test_career_candidate_urls_include_german_paths(loaded_sample):
-    cfg = loaded_sample.config
-    urls = career_candidate_urls("https://firma.test/about", cfg)
-    assert "https://firma.test/karriere" in urls
-    assert "https://firma.test/de/stellenangebote" in urls
 
 
 def test_german_apply_and_login_text_are_blocked_by_config(loaded_sample):

@@ -107,11 +107,11 @@ Key areas to review:
 - **`scoring`** — minimum export score, high-fit threshold
 - **`browser`** — headless mode
 - **`run`** — backlog reset, ordering, delays, debug mode
-- **`crawler`** — per-source page limits, error retry, domain expansion, batch size
+- **`crawler`** — per-source page limits, error retry, batch size
 - **`seeding`** — mode, search URL templates
 - **`job_validation`** — whether to require the LLM to return the current page URL (not invented URLs)
 - **`memory`** — source scoring parameters
-- **`exploration`** — enable URL discovery beyond seeds.txt
+- **`exploration`** — allow LLM-classified `explore` links to enter the backlog
 - **`logging`** — log level, console/file output
 
 Match `context_window_tokens` to your server's actual context size. If your server has a smaller context, reduce this value. Tune `max_pages_per_source_key` to match your available resources.

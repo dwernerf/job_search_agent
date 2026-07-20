@@ -60,7 +60,7 @@ llm:
 
   # false is the safer default for strict JSON extraction. Set true only if you
   # want the model to spend more tokens reasoning and your server returns clean JSON.
-  thinking_enabled: false
+  thinking_enabled: true
 
   # Ask servers that support JSON mode to return a JSON object.
   # The client retries once without this option if llama.cpp rejects it.
@@ -74,7 +74,7 @@ run:
   # Clear the backlog at each start. This prevents stale backlog items from
   # an older mode/profile run from dragging the agent into irrelevant pages.
   # It does not delete jobs or learned source memory.
-  reset_backlog_on_start: true
+  reset_backlog_on_start: false
 
   # Backlog queue ordering: "fifo" (insertion order) or "shuffle" (random).
   # Shuffle prevents the agent from always following the same traversal path
@@ -94,11 +94,6 @@ crawler:
 
   # Prevent one source from consuming the whole run.
   max_pages_per_source_key: 25
-
-  # Domain-level career expansion can discover useful companies but broad
-  # runs should not guess /careers on every linked domain. Keep this 0
-  # unless you intentionally want domain expansion.
-  max_career_domain_expansions_per_page: 0
 
   # Number of links to send to the LLM per batch. Each link includes its own
   # fetched page_context. If the batch exceeds the context window, the last
@@ -126,7 +121,8 @@ memory:
   blacklist_below_score: 8.0
 
 exploration:
-  # true lets the agent discover URLs beyond seeds.txt.
+  # Allow links classified by the LLM as "explore" to enter the backlog.
+  # This does not affect startup seeds or bootstrapped search URLs.
   enabled: true
 
 # Seed configuration

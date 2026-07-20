@@ -9,7 +9,7 @@ from .config import JobAgentConfig
 from .db import Database
 from .models import BacklogItem, LinkCandidate
 
-from .urltools import career_candidate_urls, clean_url, render_query_url, source_key
+from .urltools import clean_url, render_query_url, source_key
 
 
 def read_text(path: Path) -> str:
@@ -91,7 +91,7 @@ def seed_backlog(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
             if db.enqueue(item):
                 count += 1
 
-    if mode in ("bootstrap", "both") and config.exploration.enabled:
+    if mode in ("bootstrap", "both"):
         for query in bootstrap_queries(config):
             for url in search_urls_for_query(query, config):
                 item = BacklogItem(
@@ -142,20 +142,6 @@ def enqueue_follow_urls(
     for url in urls:
         cleaned = clean_url(url, source_url, config)
         links.append(LinkCandidate(text="llm-follow", url=url))
-    return enqueue_links(links, source_url, next_depth, config, db)
-
-
-def enqueue_career_candidates(
-    url: str,
-    source_url: str,
-    next_depth: int,
-    config: JobAgentConfig,
-    db: Database,
-) -> int:
-    links = [
-        LinkCandidate(text="career candidate", url=candidate)
-        for candidate in career_candidate_urls(url, config)
-    ]
     return enqueue_links(links, source_url, next_depth, config, db)
 
 

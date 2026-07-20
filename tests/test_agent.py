@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unittest.mock import MagicMock
+
+import pytest
 
 from jobagent.agent import JobAgent
 from jobagent.db import Database
@@ -65,6 +68,76 @@ class FakeLLM:
             if not c.url and c.index in ctx_by_index:
                 c.url = ctx_by_index[c.index]
         return decision
+
+
+class ExploringLLM(FakeLLM):
+    def analyze_page(self, snapshot: PageSnapshot, links_with_context, memory_summary: str) -> PageDecision:
+        if snapshot.url == "https://alpha.test/start":
+            return PageDecision(
+                jobs=[],
+                link_classifications=[
+                    LinkClassification(index=0, type="explore", reason="Relevant job index")
+                ],
+                source_quality=70,
+                source_notes="Relevant source to explore",
+            )
+        return PageDecision(jobs=[], link_classifications=[], source_quality=20, source_notes="No links")
+
+
+@pytest.mark.parametrize("exploration_enabled", [False, True])
+def test_agent_exploration_flag_controls_explore_enqueue(temp_loaded, exploration_enabled):
+    start_url = "https://alpha.test/start"
+    explore_url = "https://alpha.test/jobs"
+    temp_loaded.config.exploration.enabled = exploration_enabled
+    temp_loaded.paths.seeds_path.write_text(f"{start_url}\n", encoding="utf-8")
+    pages = {
+        start_url: PageSnapshot(
+            url=start_url,
+            final_url=start_url,
+            title="Alpha",
+            text="Procurement jobs in Munich",
+            links=[LinkCandidate(text="Open jobs", url=explore_url)],
+        ),
+        explore_url: PageSnapshot(
+            url=explore_url,
+            final_url=explore_url,
+            title="Alpha Jobs",
+            text="Open positions",
+            links=[],
+        ),
+    }
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+    agent = JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: FakeBrowser(pages),
+        llm_client=ExploringLLM(),
+    )
+    reporter = MagicMock()
+    agent.reporter = reporter
+
+    assert agent.run() == 0
+    explore_row = db.conn.execute("select status from backlog where url = ?", (explore_url,)).fetchone()
+    assert (explore_row is not None) is exploration_enabled
+    if explore_row is not None:
+        assert explore_row["status"] == "done"
+
+    action_calls = reporter.action.call_args_list
+    assert all(call.args[0] != "page_analyzed" for call in action_calls)
+
+    batch_calls = [call for call in action_calls if call.args[0] == "batch_complete"]
+    assert len(batch_calls) == 1
+    assert set(batch_calls[0].kwargs) == {
+        "batch", "saved", "high_fit", "enqueued", "queued", "source_quality", "source_notes"
+    }
+    assert batch_calls[0].kwargs["enqueued"] == int(exploration_enabled)
+
+    page_calls = [call for call in action_calls if call.args[0] == "page_complete"]
+    start_page_call = next(call for call in page_calls if call.kwargs["title"] == "Alpha")
+    assert set(start_page_call.kwargs) == {
+        "saved", "high_fit", "enqueued", "queued", "source_quality", "source_notes", "title"
+    }
+    db.close()
 
 
 def test_agent_explores_follow_url_saves_job(temp_loaded):

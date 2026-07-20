@@ -19,6 +19,20 @@ def test_seed_backlog_reads_seed_file(temp_loaded):
     db.close()
 
 
+def test_bootstrap_seeding_is_independent_of_runtime_exploration(temp_loaded):
+    temp_loaded.config.seeding.mode = "both"
+    temp_loaded.config.exploration.enabled = False
+    temp_loaded.paths.seeds_path.write_text("https://acme.test/careers\n", encoding="utf-8")
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    count = seed_backlog(temp_loaded.config, db, temp_loaded.paths.seeds_path)
+
+    rows = db.conn.execute("select discovered_from from backlog").fetchall()
+    assert count == len(rows)
+    assert {row["discovered_from"] for row in rows} == {"seed-file", "bootstrap-query"}
+    db.close()
+
+
 def test_read_seed_urls_ignores_comments(temp_loaded):
     temp_loaded.paths.seeds_path.write_text("# ignored\n\nhttps://acme.test/jobs\n", encoding="utf-8")
     urls = read_seed_urls(temp_loaded.paths.seeds_path, temp_loaded.config)
@@ -31,7 +45,3 @@ def test_seeds_file_has_minimum_entries(loaded_sample):
     assert len(urls) >= 8, "seeds.txt must have at least 8 entries"
     assert all(u.startswith("https://") for u in urls), "all seeds must use https"
     assert len(urls) == len(set(urls)), "seeds must be deduplicated"
-
-
-
-

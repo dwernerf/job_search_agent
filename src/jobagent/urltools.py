@@ -106,19 +106,3 @@ def domain_from_url(url: str) -> str:
 
 def render_query_url(query: str, template: str) -> str:
     return template.format(query=quote(query))
-
-
-def root_url(url: str) -> str:
-    parsed = urlparse(url)
-    return urlunparse((parsed.scheme, parsed.netloc, "/", "", "", ""))
-
-
-def career_candidate_urls(url: str, config: JobAgentConfig) -> list[str]:
-    root = root_url(url).rstrip("/")
-    out: list[str] = []
-    for path in config.crawler.career_path_candidates:
-        cleaned_path = "/" + path.strip().lstrip("/")
-        candidate = clean_url(root + cleaned_path, None, config)
-        if candidate:
-            out.append(candidate)
-    return list(dict.fromkeys(out))

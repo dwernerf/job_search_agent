@@ -11,7 +11,6 @@ from .config import LoadedConfig, ensure_data_dirs, load_config
 from .db import Database
 from .discover import (
     build_run_summary,
-    enqueue_career_candidates,
     seed_backlog,
 )
 from .extract import compact_text, page_decision_from_dict
@@ -126,6 +125,7 @@ class JobAgent:
                         batches.append(candidate_links[i:i + batch_size])
 
                     for batch_idx, batch in enumerate(batches):
+                        batch_enqueued_before = enqueued
                         self.reporter.action(
                             "batch_start",
                             batch=batch_idx + 1,
@@ -197,7 +197,7 @@ class JobAgent:
                                     evidence=c.evidence,
                                     posting_language="",
                                 ))
-                            elif c.type == "explore":
+                            elif c.type == "explore" and self.config.exploration.enabled:
                                 backlog_item = self.db._make_backlog_item(
                                     url=c.url,
                                     depth=next_depth,
@@ -222,7 +222,8 @@ class JobAgent:
                         cleaned = self._clean_jobs(batch_candidates)
                         page_saved = self.db.save_jobs(cleaned, item.url, item.source_key)
                         saved += page_saved
-                        high_fit_count += sum(1 for c in cleaned if c.fit_score >= self.config.scoring.high_fit_score_threshold)
+                        batch_high_fit = sum(1 for c in cleaned if c.fit_score >= self.config.scoring.high_fit_score_threshold)
+                        high_fit_count += batch_high_fit
                         for job in cleaned:
                             self.db.record_page(
                                 url=job.url,
@@ -237,6 +238,16 @@ class JobAgent:
                                 discovered_from=job.url,
                             )
 
+                        self.reporter.action(
+                            "batch_complete",
+                            batch=f"{batch_idx + 1}/{len(batches)}",
+                            saved=page_saved,
+                            high_fit=batch_high_fit,
+                            enqueued=enqueued - batch_enqueued_before,
+                            queued=self.db.queued_count(),
+                            source_quality=classification.source_quality,
+                            source_notes=classification.source_notes,
+                        )
 
                         if self.config.run.debug_mode:
                             for lc in links_with_context:
@@ -255,12 +266,6 @@ class JobAgent:
                                                   c.index, c.url, c.type, c.fit_score, (c.reason or ""), page_ctx)
 
                     jobs_saved_total += saved
-                    self.reporter.action(
-                        "page_analyzed",
-                        total_jobs=saved,
-                        high_fit_count=high_fit_count,
-                        source_notes=first_source_notes,
-                    )
 
                     self.db.record_page(
                         url=item.url,
@@ -275,19 +280,6 @@ class JobAgent:
                         discovered_from=item.discovered_from,
                     )
 
-                    # Career domain expansion
-                    expansion_limit = self.config.crawler.max_career_domain_expansions_per_page
-                    if expansion_limit > 0:
-                        expanded_domains: set[str] = set()
-                        for link in candidate_links:
-                            domain = domain_from_url(link.url)
-                            if domain in expanded_domains:
-                                continue
-                            if len(expanded_domains) >= expansion_limit:
-                                break
-                            expanded_domains.add(domain)
-                            enqueued += enqueue_career_candidates(link.url, snapshot.final_url, next_depth, self.config, self.db)
-
                     self.db.mark_backlog(item.url, "done")
                     self.reporter.record_page(
                         status="ok",
@@ -300,9 +292,11 @@ class JobAgent:
                     self.reporter.action(
                         "page_complete",
                         saved=saved,
+                        high_fit=high_fit_count,
                         enqueued=enqueued,
                         queued=self.db.queued_count(),
                         source_quality=first_source_quality,
+                        source_notes=first_source_notes,
                         title=snapshot.title,
                     )
                     self.logger.debug(

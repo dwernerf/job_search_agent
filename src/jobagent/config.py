@@ -52,15 +52,6 @@ def default_job_link_hints() -> list[str]:
     ]
 
 
-def default_career_paths() -> list[str]:
-    return [
-        "/careers", "/career", "/jobs", "/en/careers", "/en/jobs", "/join-us",
-        "/work-with-us", "/karriere", "/de/karriere", "/de/jobs", "/de/stellenangebote",
-        "/stellenangebote", "/offene-stellen", "/jobsuche", "/arbeiten-bei-uns",
-        "/de/arbeiten-bei-uns", "/de/karriere/stellenangebote", "/karriere/stellenangebote",
-    ]
-
-
 def default_safety_url_patterns() -> list[str]:
     return [
         r"(?i)/career/(zh|ja|ko|fr|it|es|pt|pl|cs|hu|ru|tr|nl|sv|fi|da|no)([_/]|$)",
@@ -321,14 +312,12 @@ class CrawlerConfig(StrictModel):
     dedupe_url_tracking_params: list[str] = Field(default_factory=default_tracking_params)
     job_link_hints: list[str] = Field(default_factory=default_job_link_hints)
     source_discovery_terms: list[str] = Field(default_factory=list)
-    career_path_candidates: list[str] = Field(default_factory=default_career_paths)
     retry_error_pages: bool = True
     max_compact_lines: int = Field(default=180, gt=0)
     max_important_lines: int = Field(default=240, gt=0)
     max_page_text_chars: int = Field(default=14000, gt=0)
     min_body_chars_to_analyze: int = Field(default=150, ge=0)
     max_pages_per_source_key: int = Field(default=25, gt=0)
-    max_career_domain_expansions_per_page: int = Field(default=4, ge=0)
     batch_size_for_llm: int = Field(default=30, gt=0)
     max_page_context_chars: int = Field(default=5000, gt=0)
 
