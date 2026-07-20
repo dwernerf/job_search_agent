@@ -7,10 +7,9 @@ page_analysis_user: |-
   $profile
 
   Target area: $local_area
-  Location policy: $location_policy
   Languages to understand: $target_languages
   Language policy: $language_policy
-  Learned source memory: $memory_summary
+  Jobs are persisted only when fit_score is at least $min_score_to_export.
 
   Overview page actually loaded by the browser:
   Requested URL: $url
@@ -22,7 +21,7 @@ page_analysis_user: |-
   $text
 
   Candidate links with their fetched page context. For each link, you are provided:
-  - index: position in the original link list
+  - index: position in the current link batch
   - text: the clickable link text
   - url: the destination URL
   - page_context: the first several thousand characters of text extracted from the fetched destination page
@@ -41,7 +40,7 @@ page_analysis_user: |-
   Return JSON only with this exact shape:
   {
     "link_classifications": [
-      {"index": 0, "type": "job_listing", "fit_score": 85, "title": "Senior Software Engineer", "company": "Example Corp", "location": "Munich", "evidence": "Software engineering role in Munich", "reason": "Matches target criteria"},
+      {"index": 0, "type": "job_listing", "fit_score": 85, "title": "Example Target Role", "company": "Example Corp", "location": "Target City", "evidence": "Concrete role evidence", "reason": "Matches target criteria"},
       {"index": 1, "type": "explore", "fit_score": 0, "reason": "Example Reason"},
       {"index": 2, "type": "skip", "fit_score": 0, "reason": "Example Reason"}
     ],
@@ -49,7 +48,7 @@ page_analysis_user: |-
     "source_notes": "concise source-quality note"
   }
 
-  IMPORTANT: Return a link_classifications entry for EVERY link provided. Never return full URLs in this field. The index corresponds to the position in the links array above. If all links are skip, return an array of skip entries.
+  IMPORTANT: Return a link_classifications entry for EVERY link provided. Never return full URLs in this field. The index corresponds to the position in the current batch above. If all links are skip, return an array of skip entries.
 
   Fit scoring policy (only for job_listing entries):
   - Use the candidate profile as the source of truth for target roles, exclusions, expertise, industry preferences, and seniority. Be critical during this evaluation.
@@ -61,5 +60,5 @@ page_analysis_user: |-
   - 0-44: wrong role, excluded role, unclear role, wrong location, initiative/talent-pool/general application, listing page, overview page, or insufficient evidence.
   - A role excluded by the profile must score below 45 even if the company, city, or industry looks attractive.
   - A role without a clear target-role signal from the profile must score below 45.
-  - A non-remote job outside the configured target area radius must score below 45.
+  - A non-remote job outside the target-area policy in the candidate profile must score below 45.
   - Broad-only locations are insufficient for non-remote jobs unless the posting explicitly supports remote work in the accepted country.

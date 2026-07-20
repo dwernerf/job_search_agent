@@ -99,25 +99,11 @@ def extract_profile_knowledge(profile_text: str) -> ProfileKnowledge:
         elif bucket == "positive":
             knowledge.positive_terms.extend(terms)
         else:
-            # Neutral bullets are useful search context but should not become score guardrails.
+            # Neutral bullets are useful search and text-relevance context.
             knowledge.search_terms.extend(terms)
 
-    # Useful short signals derived from multi-word target roles.
-    derived_role_signals: list[str] = []
-    for role in knowledge.target_roles:
-        role_l = role.casefold()
-        for token in (
-            "procurement", "purchasing", "buyer", "sourcing", "supply chain",
-            "supplier quality", "supplier development", "supplier management",
-            "category", "commodity", "einkauf", "einkäufer", "einkaeufer",
-            "beschaffung", "lieferantenqualität", "lieferantenqualitaet",
-            "lieferantenentwicklung", "lieferantenmanagement", "warengruppe",
-        ):
-            if token in role_l:
-                derived_role_signals.append(token)
-
     knowledge.target_roles = unique_terms(knowledge.target_roles)
-    knowledge.role_signals = unique_terms(knowledge.role_signals + derived_role_signals)
+    knowledge.role_signals = unique_terms(knowledge.role_signals)
     knowledge.positive_terms = unique_terms(knowledge.positive_terms + knowledge.search_terms)
     knowledge.avoid_terms = unique_terms(knowledge.avoid_terms)
     knowledge.search_terms = unique_terms(knowledge.search_terms + knowledge.target_roles + knowledge.positive_terms)

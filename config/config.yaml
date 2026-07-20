@@ -1,12 +1,11 @@
 # jobagent-local runtime configuration
 #
 # Put job-search intent in config/profile.md.
-# Keep this YAML for operational behavior: model endpoint, crawl limits,
-# search mode, radius, validation, memory, and logging.
+# Keep this YAML for operational behavior: model endpoint, crawl settings,
+# search mode, scoring, and logging.
 
 app:
-  # Output files. jobs.sqlite also stores source memory and crawl state.
-  data_dir: data
+  # Output files. jobs.sqlite also stores crawl state.
   database_path: data/jobs.sqlite
   csv_export_path: data/jobs.csv
   jsonl_export_path: data/jobs.jsonl
@@ -14,10 +13,6 @@ app:
 
   # Browser/crawler user-agent string.
   user_agent: JobMatchAgent/0.1 (+local personal job search; read-only)
-
-target:
-  # Keep explicitly remote-from-Germany jobs even if no office is inside the radius.
-  include_remote: true
 
 profile:
   # Single source of truth for roles, aliases, expertise, industries, and exclusions.
@@ -38,7 +33,7 @@ llm:
   # Model name sent to llama.cpp. Most local servers accept "local".
   model: local
 
-  # Read timeout for one LLM request. 400s is useful for larger Qwen runs on CPU.
+  # Read timeout for one LLM request.
   timeout_seconds: 1000
 
   # Short startup check so the crawler does not browse hundreds of pages while
@@ -48,18 +43,13 @@ llm:
   # true means: verify the local LLM is reachable before opening pages.
   require_available_on_start: true
 
-  # true means: stop the run if llama.cpp disappears mid-run instead of
-  # continuing to enqueue irrelevant pages without LLM judgement.
-  stop_run_on_connection_error: true
-
   # Low temperature keeps extraction and scoring consistent.
   temperature: 0.1
 
   # Set this to the context size configured in llama.cpp.
   context_window_tokens: 150000
 
-  # false is the safer default for strict JSON extraction. Set true only if you
-  # want the model to spend more tokens reasoning and your server returns clean JSON.
+  # Set true only if the model server returns clean JSON after reasoning.
   thinking_enabled: true
 
   # Ask servers that support JSON mode to return a JSON object.
@@ -73,7 +63,7 @@ browser:
 run:
   # Clear the backlog at each start. This prevents stale backlog items from
   # an older mode/profile run from dragging the agent into irrelevant pages.
-  # It does not delete jobs or learned source memory.
+  # It does not delete jobs or visited-page state.
   reset_backlog_on_start: false
 
   # Backlog queue ordering: "fifo" (insertion order) or "shuffle" (random).
@@ -81,24 +71,21 @@ run:
   # when multiple URLs share the same insertion time (e.g. seed URLs).
   backlog_order: shuffle
 
-  # Delay between page visits. Kept below 1 second per your request.
+  # Delay after each processed backlog page.
   min_delay_seconds: 0.2
   max_delay_seconds: 0.8
 
-  # When true, log each link's full page_context at debug level after LLM classification.
-  debug_mode: true
-
 crawler:
+  # How URLs are grouped in exported source_key values.
+  source_key_mode: domain_path1
+
   # Retry pages that failed in earlier runs.
   retry_error_pages: true
 
-  # Prevent one source from consuming the whole run.
-  max_pages_per_source_key: 25
-
   # Number of links to send to the LLM per batch. Each link includes its own
   # fetched page_context. If the batch exceeds the context window, the last
-  # link is dropped and the batch retried until it fits.
-  batch_size_for_llm: 50
+  # link is deferred to its own batch and the reduced batch is retried once.
+  batch_size_for_llm: 35
 
   # Maximum characters of page_context to include per link in the LLM prompt.
   max_page_context_chars: 5000
@@ -107,18 +94,8 @@ scoring:
   # Minimum fit score (0-100) for a job to be exported/saved. Jobs below this are dropped.
   min_score_to_export: 45
 
-  # Fit score threshold (0-100) that triggers a high-fit bonus (boosts source quality).
+  # Fit score threshold (0-100) used in progress reporting.
   high_fit_score_threshold: 80
-
-memory:
-  # Stored in data/jobs.sqlite, table source_memory.
-  # Higher source scores are opened earlier in future runs.
-  initial_score: 50.0
-  reward_job_found: 6.0
-  reward_high_fit_job: 8.0
-  penalty_no_job: -1.5
-  penalty_error: -5.0
-  blacklist_below_score: 8.0
 
 exploration:
   # Allow links classified by the LLM as "explore" to enter the backlog.
@@ -128,11 +105,14 @@ exploration:
 # Seed configuration
 # set seeding.mode to "seeds" to populate from seeds.txt, 
 # "bootstrap" to generated links from search template with extracted terms 
-# from profile.md and intent.yml or "both".
+# from profile.md and intent.yaml or "both".
 seeding:
   mode: both
 
   bootstrapped_search:
+    # Maximum distinct role/suffix/company queries sampled per startup.
+    max_samples: 50
+
     # Search endpoints for bootstrapped queries.
     # Supported placeholder: {query} URL-encoded text.
     search_url_templates:
@@ -143,28 +123,6 @@ seeding:
       - job offerings
       - stellenangebote
 
-job_validation:
-  # Drops initiative applications, invented links, city-only titles, and index pages.
-  enabled: true
-
-  # Critical: save CSV rows only from the job-detail page that was actually loaded.
-  # Overview/search/listing pages can only contribute follow URLs.
-  require_loaded_job_detail_page: true
-
-  # LLM URLs must be either the current page URL or a URL seen on the current page.
-  enforce_llm_urls_from_page: true
-
-  # The current page may be saved only if it looks like a concrete posting.
-  allow_current_page_as_job_url: true
-  current_page_url_must_look_like_detail: true
-
-  # Prevent job-board city/filter/search pages from being exported as jobs.
-  drop_if_url_is_index_page: true
-  drop_if_title_is_location: true
-
-  # Drop postings where the company matches companies.blacklist.
-  drop_if_company_blacklisted: true
-
 logging:
   # Only two levels are supported:
   #   info  = structured step/result logs
@@ -172,9 +130,3 @@ logging:
   level: info
   console: true
   file: true
-
-  # Cosmetic truncation for console/file log lines.
-  show_urls: true
-  max_url_chars: 220
-  max_title_chars: 140
-  max_notes_chars: 260

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import yaml
+
 from jobagent.config import load_config
 
 
@@ -11,48 +13,20 @@ def test_sample_config_loads(sample_config_path):
     assert loaded.paths.prompts_path.exists()
 
 
-def test_runtime_paths_resolve_relative_to_repo(sample_config_path):
+def test_runtime_paths_resolve_relative_to_config_project(sample_config_path):
     loaded = load_config(sample_config_path)
-    assert loaded.paths.project_root == sample_config_path.parents[1].resolve()
-    assert loaded.paths.database_path.name == "jobs.sqlite"
+    project_root = sample_config_path.parents[1].resolve()
+
+    assert loaded.paths.database_path == project_root / "data" / "jobs.sqlite"
+    assert loaded.paths.profile_path == project_root / "config" / "profile.md"
+    assert loaded.paths.prompts_path == project_root / "config" / "prompts.yaml"
 
 
-
-def test_llm_config_uses_large_context_window(sample_config_path):
-    import yaml
+def test_llm_config_matches_yaml(sample_config_path):
     loaded = load_config(sample_config_path)
-    raw = yaml.safe_load(sample_config_path.read_text())
+    raw = yaml.safe_load(sample_config_path.read_text(encoding="utf-8"))
+
     assert loaded.config.llm.base_url == raw["llm"]["base_url"]
     assert loaded.config.llm.context_window_tokens == raw["llm"]["context_window_tokens"]
     assert loaded.config.llm.thinking_enabled is True
     assert loaded.config.llm.timeout_seconds == raw["llm"]["timeout_seconds"]
-
-
-def test_legacy_llm_budget_keys_are_migrated(tmp_path, sample_config_path):
-    import shutil
-    import yaml
-
-    project = tmp_path / "project"
-    shutil.copytree(sample_config_path.parents[1], project, ignore=shutil.ignore_patterns("data", "__pycache__", ".pytest_cache"))
-    config_path = project / "config" / "config.yaml"
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    data["llm"].pop("output_tokens", None)
-    data["llm"].pop("thinking_enabled", None)
-    data["llm"].update(
-        {
-            "max_tokens": 1234,
-            "disable_thinking": True,
-            "no_think_prefix": "/no_think",
-            "max_prompt_tokens": 2600,
-            "prompt_safety_margin_tokens": 250,
-            "token_estimate_chars_per_token": 4.0,
-            "max_page_text_chars_for_prompt": 6500,
-            "min_page_text_chars_for_prompt": 1800,
-        }
-    )
-    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-
-    loaded = load_config(config_path)
-    assert loaded.config.llm.thinking_enabled is False
-    assert loaded.config.llm.disable_thinking is True
-    assert loaded.config.llm.no_think_prefix == "/no_think"

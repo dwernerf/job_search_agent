@@ -13,8 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()
-def sample_config_path() -> Path:
-    return REPO_ROOT / "config" / "config.yaml"
+def sample_config_path(tmp_path: Path) -> Path:
+    shutil.copytree(REPO_ROOT / "config", tmp_path / "config")
+    return tmp_path / "config" / "config.yaml"
 
 
 @pytest.fixture()
@@ -23,9 +24,8 @@ def loaded_sample(sample_config_path: Path) -> LoadedConfig:
 
 
 @pytest.fixture()
-def temp_loaded(tmp_path: Path) -> LoadedConfig:
-    shutil.copytree(REPO_ROOT / "config", tmp_path / "config")
-    config_path = tmp_path / "config" / "config.yaml"
+def temp_loaded(sample_config_path: Path) -> LoadedConfig:
+    config_path = sample_config_path
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     data["run"]["min_delay_seconds"] = 0
     data["run"]["max_delay_seconds"] = 0
@@ -33,14 +33,19 @@ def temp_loaded(tmp_path: Path) -> LoadedConfig:
     data["logging"]["console"] = False
     data["logging"]["file"] = False
     data["seeding"]["mode"] = "seeds"
-    data["seeding"]["bootstrapped_search"]["company_whitelist"] = ["Zeiss", "Trumpf", "Rohde-Schwarz"]
 
     config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
-    # Override company whitelist in the temp intent.yaml
-    intent_path = tmp_path / "config" / "intent.yaml"
+    intent_path = config_path.parent / "intent.yaml"
     intent_data = yaml.safe_load(intent_path.read_text(encoding="utf-8"))
-    intent_data["companies"]["whitelist"] = ["Zeiss", "Trumpf", "Rohde-Schwarz"]
+    intent_data["location"] = {
+        "local_area": "Munich, Bavaria, Germany",
+        "languages": ["German", "English"],
+    }
+    intent_data["companies"] = {
+        "blacklist": [],
+        "whitelist": ["Zeiss", "Trumpf", "Rohde-Schwarz"],
+    }
     intent_path.write_text(yaml.safe_dump(intent_data, sort_keys=False), encoding="utf-8")
 
     return load_config(config_path)

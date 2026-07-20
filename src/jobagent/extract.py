@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Literal, cast
 
 from .config import JobAgentConfig
 from .language import multilingual_relevance_terms
-from .models import JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot, as_text
-from .urltools import clean_url, denied_by_safety
+from .models import LinkClassification, PageDecision, as_text
 
 
 def compact_text(text: str, config: JobAgentConfig) -> str:
@@ -25,12 +24,16 @@ def compact_text(text: str, config: JobAgentConfig) -> str:
         if len(important) >= config.crawler.max_important_lines:
             break
 
-    body = "\n".join(head)
-    if important:
-        body += "\n\nLIKELY RELEVANT LINES:\n"
-        body += "\n".join(important)
+    head_text = "\n".join(head)
+    if not important:
+        return head_text[: config.crawler.max_page_text_chars]
 
-    return body[: config.crawler.max_page_text_chars]
+    marker = "\n\nLIKELY RELEVANT LINES:\n"
+    important_text = "\n".join(dict.fromkeys(important))
+    important_budget = max(0, config.crawler.max_page_text_chars // 2 - len(marker))
+    suffix = marker + important_text[:important_budget]
+    head_budget = max(0, config.crawler.max_page_text_chars - len(suffix))
+    return head_text[:head_budget] + suffix
 
 
 
@@ -60,32 +63,34 @@ def parse_json_object(raw: str) -> dict[str, Any]:
 
 
 def page_decision_from_dict(data: dict[str, Any]) -> PageDecision:
-    jobs: list[JobMatch] = []
-
-    for item in data.get("jobs", []) or []:
-        if not isinstance(item, dict):
-            continue
-        job = JobMatch(
-            title=as_text(item.get("title"), 300),
-            company=as_text(item.get("company"), 200),
-            location=as_text(item.get("location"), 200),
-            url=as_text(item.get("url"), 1500),
-            fit_score=int(item.get("fit_score") or 0),
-            reason=as_text(item.get("reason"), 800),
-            evidence=as_text(item.get("evidence"), 800),
-            posting_language=as_text(item.get("posting_language") or item.get("language"), 80),
-        )
-        if job.title and job.url:
-            jobs.append(job)
-
     link_classifications = []
     for item in data.get("link_classifications", []) or []:
         if not isinstance(item, dict):
             continue
+        raw_index = item.get("index")
+        if isinstance(raw_index, bool):
+            continue
+        if isinstance(raw_index, int):
+            index = raw_index
+        elif isinstance(raw_index, str) and raw_index.strip().isdigit():
+            index = int(raw_index.strip())
+        else:
+            continue
+        try:
+            fit_score = int(item.get("fit_score") or 0)
+        except (TypeError, ValueError):
+            continue
+        classification_type = as_text(item.get("type", "skip"), 30)
+        if classification_type not in {"job_listing", "explore", "skip"}:
+            continue
+        if not 0 <= fit_score <= 100:
+            continue
+        if classification_type != "job_listing":
+            fit_score = 0
         classification = LinkClassification(
-            index=int(item.get("index", 0)),
-            type=item.get("type", "skip"),
-            fit_score=int(item.get("fit_score") or 0),
+            index=index,
+            type=cast(Literal["job_listing", "explore", "skip"], classification_type),
+            fit_score=fit_score,
             title=as_text(item.get("title"), 300),
             company=as_text(item.get("company"), 200),
             location=as_text(item.get("location"), 200),
@@ -94,12 +99,13 @@ def page_decision_from_dict(data: dict[str, Any]) -> PageDecision:
         )
         link_classifications.append(classification)
 
+    try:
+        source_quality = int(data.get("source_quality") or 0)
+    except (TypeError, ValueError):
+        source_quality = 0
+
     return PageDecision(
-        jobs=jobs,
         link_classifications=link_classifications,
-        source_quality=int(data.get("source_quality") or 0),
+        source_quality=max(0, min(100, source_quality)),
         source_notes=as_text(data.get("source_notes"), 1000),
     )
-
-
-

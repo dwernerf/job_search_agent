@@ -118,7 +118,6 @@ class BrowserSession:
                 title=title,
                 text=text,
                 links=links,
-                structured_jobs=structured_jobs,
                 status_code=status_code,
             )
         finally:

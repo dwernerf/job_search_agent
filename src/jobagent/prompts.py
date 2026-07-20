@@ -24,4 +24,4 @@ class PromptBook:
         if name not in self._prompts:
             raise KeyError(f"missing prompt template: {name}")
         text_values = {k: str(v) for k, v in values.items()}
-        return Template(self._prompts[name]).safe_substitute(text_values)
+        return Template(self._prompts[name]).substitute(text_values)

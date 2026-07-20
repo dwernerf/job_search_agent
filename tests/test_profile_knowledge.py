@@ -16,7 +16,7 @@ def test_profile_derives_target_roles_and_avoid_terms(loaded_sample):
 
 def test_prompts_are_generic_and_do_not_contain_target_role_content(loaded_sample):
     text = loaded_sample.paths.prompts_path.read_text(encoding="utf-8").casefold()
-    forbidden = ["procurement", "purchasing", "supplier quality", "supply chain", "einkauf", "beschaffung", "optics", "laser"]
+    forbidden = ["procurement", "purchasing", "supplier quality", "supply chain", "software engineer", "munich", "einkauf", "beschaffung", "optics", "laser"]
     assert not any(term in text for term in forbidden)
 
 

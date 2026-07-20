@@ -12,39 +12,45 @@ scripts/test.sh         # pytest + compileall (make test only runs pytest)
 Single-process Python app. Entry: `src/jobagent/agent.py:main()` → `JobAgent.run()`.
 
 Key modules (all in `src/jobagent/`):
-- `config.py` — Pydantic models + YAML loading. `load_config()` merges `config.yaml` defaults with `config/intent.yaml` personal overrides.
-- `discover.py` — backlog seeding from seeds.txt/profile, URL enqueue, exploration scope filtering.
-- `db.py` — SQLite persistence. `export_csv`/`export_jsonl` export all rows unfiltered. Jobs are exported to CSV/JSONL automatically on every `save_jobs()` call — CSV and SQLite are always in sync.
-- `company_filters.py` — blacklist matching only.
-- `llm.py` — OpenAI-compatible local LLM client. Prompt rendering + token budgeting.
-- `browser.py` — Playwright wrapper.
-- `extract.py` — link ranking.
-- `prompts.py` — template rendering.
-- `reporting.py` — `ActionReporter` for structured log events. All agent logging must go through `reporter.action()`, not `self.logger`. `self.logger` is reserved for debug-mode internals only.
+- `config.py` — strict Pydantic config loading; copies personal intent values into runtime config and derives role/relevance terms from the profile.
+- `discover.py` — seed-file and bootstrap URL generation plus startup backlog seeding.
+- `db.py` — strict SQLite v1 persistence for `jobs`, `pages`, and `backlog`; synchronizes CSV/JSONL on open and after each non-empty job save.
+- `company_filters.py` — company-blacklist matching only.
+- `llm.py` — OpenAI-compatible local LLM client, link-classification prompt rendering, and context-size estimation.
+- `browser.py` — Playwright page loading, anchor extraction, and `JobPosting` JSON-LD extraction.
+- `extract.py` — page-text compaction and LLM JSON parsing.
+- `prompts.py` — prompt-template rendering.
+- `reporting.py` — structured progress logging. User-facing agent progress goes through `reporter.action()`; `self.logger` is for debug internals.
 
 ## Config (never edit profile content in YAML)
-- `config/profile.md` — **single source of truth** for job-search intent. Roles, signals, expertise, exclusions, industries. All query vocabulary, score guardrails, and positive-fit terms derived from this file.
-- `config/intent.yaml` — personal overrides: blacklist, target city/coords/radius, company whitelist. Values are read directly from `IntentConfig` — **never** merged into `config.yaml` fields.
-- `config/config.yaml` — operational knobs and defaults.
-- `config/prompts.yaml` — **generic** LLM instructions. Never add role-specific content here.
+- `config/profile.md` — candidate profile and detailed search intent. Its complete text is sent to the LLM; parsed target roles feed bootstrap searches and parsed terms feed text compaction.
+- `config/intent.yaml` — personal short local-area/language values, company blacklist, and bootstrap company whitelist.
+- `config/config.yaml` — operational knobs and defaults only.
+- `config/prompts.yaml` — generic LLM instructions. Never add role-specific content here.
 - `config/seeds.txt` — optional starting URLs.
 
 ### Config file boundaries (never cross them)
-- `intent.yaml` and `config.yaml` must not share parameter names. No YAML merge overwrites.
+- `load_config()` validates the files separately and copies non-empty intent values into the runtime model; it does not merge YAML dictionaries.
 
 ## Key operational facts
 - **LLM must be running first.** The agent checks `llm.base_url + /models` on startup; if unavailable it stops with `llm_unavailable_stop` rather than crawling blindly.
-- `job_validation.require_loaded_job_detail_page: true` — CSV/JSONL rows are saved **only** from actually loaded job-detail pages. Overview/search pages contribute follow URLs only. (Enforced via LLM prompt instructions, not runtime check.)
-
-- Location filter defaults to 30 km around Munich (48.137154, 11.576124). Non-remote jobs must name a city inside the radius. Broad locations ("Germany", "Bayern") are insufficient unless the posting says Germany-remote.
-- `data/jobs.sqlite` persists all state (jobs, pages, source memory, backlog, queries). Reset with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl`
-- `run.reset_backlog_on_start: true` (default) clears stale queue URLs each run but keeps source memory and saved jobs.
-- Config path override: `JOBAGENT_CONFIG=/abs/path/to/config.yaml python -m jobagent`
+- Pipeline: seed/bootstrap URL -> browser overview -> fetch each outbound destination context -> LLM `link_classifications` -> score threshold/company blacklist/URL dedup -> jobs; `explore` -> URL-only backlog.
+- Outbound destinations are fetched before classification but are not queued unless classified as `explore`.
+- Runtime job acceptance is limited to the LLM type/score threshold, company blacklist, and URL deduplication. Location and exclusions remain LLM judgments; Python does not rescore them.
+- SQLite schema v1 contains only `jobs`, `pages`, and `backlog`. The backlog fields are `url`, `status`, and `queued_at`.
+- Job fields are `url`, `title`, `company`, `location`, `fit_score`, `reason`, `evidence`, `source_key`, `first_seen_at`, and `last_seen_at`.
+- CSV/JSONL fields are `fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, and `last_seen_at`.
+- Database startup and each non-empty `save_jobs()` call rewrite both exports from all current jobs.
+- LLM `source_quality` and `source_notes` affect reporting only, not persistence or queue order.
+- `run.reset_backlog_on_start` clears backlog rows only. Jobs and visited-page rows remain.
+- Reset all persisted state with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl`
+- Config path override: `JOBAGENT_CONFIG=/abs/path/to/config/config.yaml python -m jobagent`; keep `intent.yaml` beside it and resolve other configured paths from the containing project root.
 
 ## Tests
 - Run: `scripts/test.sh` (pytest + compileall)
-- Tests use mocked browser and LLM. No live crawling.
-- Test config copies `config/config.yaml` with `max_pages=4`, delays=0, logging disabled.
+- `make test` runs pytest only.
+- Tests are network-isolated; agent tests use fake browser/LLM implementations.
+- `temp_loaded` copies `config/`, selects seed-only mode, sets delays to zero, disables log outputs, and uses temporary data paths.
 - New tests should use the `temp_loaded` fixture from `tests/conftest.py` for isolated config.
 - No linter or formatter is configured.
 

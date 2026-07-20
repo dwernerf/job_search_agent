@@ -87,10 +87,7 @@ def extract_jobpostings(raw_json_ld: list[str], base_url: str) -> list[dict[str,
                 url = urljoin(base_url, url)
             company = _company(obj.get("hiringOrganization"))
             location = _location(obj.get("jobLocation"))
-            description = _text(obj.get("description"))
             employment_type = _text(obj.get("employmentType"))
-            date_posted = _text(obj.get("datePosted"))
-            valid_through = _text(obj.get("validThrough"))
             key = (title.casefold(), url)
             if not title or not url or key in seen:
                 continue
@@ -101,10 +98,7 @@ def extract_jobpostings(raw_json_ld: list[str], base_url: str) -> list[dict[str,
                     "company": company[:200],
                     "location": location[:200],
                     "url": url[:1500],
-                    "description": description[:4000],
                     "employment_type": employment_type[:120],
-                    "date_posted": date_posted[:80],
-                    "valid_through": valid_through[:80],
                 }
             )
     return jobs

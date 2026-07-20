@@ -11,7 +11,7 @@ run:
 	. .venv/bin/activate && python -m jobagent
 
 test:
-	PYTHONPATH=src pytest -q
+	.venv/bin/pytest -q
 
 clean:
 	rm -rf .pytest_cache __pycache__ src/jobagent/__pycache__ tests/__pycache__

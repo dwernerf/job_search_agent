@@ -17,7 +17,6 @@ class PageSnapshot:
     title: str
     text: str
     links: list[LinkCandidate] = field(default_factory=list)
-    structured_jobs: list[dict[str, Any]] = field(default_factory=list)
     status_code: int = 0
 
 
@@ -30,7 +29,6 @@ class JobMatch:
     fit_score: int
     reason: str
     evidence: str
-    posting_language: str = ""
 
 
 @dataclass(slots=True)
@@ -48,19 +46,9 @@ class LinkClassification:
 
 @dataclass(slots=True)
 class PageDecision:
-    jobs: list[JobMatch]
     source_quality: int
     source_notes: str
     link_classifications: list[LinkClassification] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class BacklogItem:
-    url: str
-    depth: int
-    discovered_from: str = ""
-    reason: str = ""
-    source_key: str = ""
 
 
 def as_text(value: Any, max_len: int) -> str:

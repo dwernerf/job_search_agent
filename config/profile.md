@@ -1,6 +1,6 @@
 # Candidate profile
 
-Edit this file to change what the agent searches for. This file is now the single source of truth for role vocabulary, preferred expertise, industry fit, and exclusions. The YAML config should mostly stay operational: paths, LLM endpoint, crawl limits, radius, memory, and logging.
+Edit this file to change the target roles and profile context used by the LLM. Role vocabulary, preferred expertise, industry fit, exclusions, and detailed search preferences belong here. YAML is reserved for operational settings plus short local-area, language, and company values.
 
 ## Search area
 
@@ -20,7 +20,6 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Supply Chain Manager / Supply-Chain-Manager
 - Supply Chain Quality Manager / Supply Chain Qualitätsmanager
 - Supplier Quality Manager / Lieferantenqualitätsmanager
-- Supplier Quality Engineer / Lieferantenqualitätsingenieur
 - Supplier Development Manager / Lieferantenentwickler
 - Supplier Manager / Lieferantenmanager
 - Quality Manager Procurement / Qualitätsmanager Einkauf

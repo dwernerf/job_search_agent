@@ -1,28 +1,59 @@
 from __future__ import annotations
 
-from jobagent.llm import LocalLLMClient
+import re
+
+import pytest
+
+from jobagent.llm import ContextWindowExceeded, LocalLLMClient
 from jobagent.models import LinkCandidate, PageSnapshot
 from jobagent.prompts import PromptBook
 
 
-def test_page_prompt_contains_profile_and_candidate_links(temp_loaded):
+def test_page_prompt_contains_link_context_and_no_unresolved_placeholders(temp_loaded):
     prompt_book = PromptBook.from_file(temp_loaded.paths.prompts_path)
-    profile = "Procurement supplier quality optics laser mechanical components. " * 500
-    client = LocalLLMClient(temp_loaded.config, prompt_book, profile)
-    snapshot = PageSnapshot(
-        url="https://example.test/jobs",
-        final_url="https://example.test/jobs",
-        title="Large job page",
-        text=("Procurement Manager München Supplier Quality Optics Laser. " * 3000),
-        links=[
-            LinkCandidate(
-                text=f"Procurement Manager Optical Components München {i} " * 5,
-                url=f"https://example.test/jobs/procurement-manager-optics-munich-{i}?with=a-very-long-query-string-that-should-be-trimmed",
-            )
-            for i in range(120)
-        ],
+    client = LocalLLMClient(
+        temp_loaded.config,
+        prompt_book,
+        "Procurement and supplier quality profile",
     )
-    system, user = client._render_page_prompts(snapshot, snapshot.links, "memory line\n" * 1000)
-    assert "Procurement Manager" in user
-    assert "Return JSON only" in user
-    assert "Procurement supplier quality" in user
+    snapshot = PageSnapshot(
+        url="https://example.test/careers",
+        final_url="https://example.test/careers",
+        title="Careers",
+        text="Open roles in Munich",
+        links=[LinkCandidate(text="Procurement Manager", url="https://example.test/jobs/1")],
+    )
+    links_with_context = [
+        {
+            "index": "0",
+            "text": "Procurement Manager",
+            "url": "https://example.test/jobs/1",
+            "page_context": "Strategic sourcing responsibilities in Munich",
+        }
+    ]
+
+    system, user = client._render_page_prompts(snapshot, links_with_context)
+
+    rendered = system + "\n" + user
+    assert "Procurement and supplier quality profile" in rendered
+    assert "https://example.test/jobs/1" in rendered
+    assert "Strategic sourcing responsibilities in Munich" in rendered
+    assert re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})", rendered) is None
+
+
+def test_classification_rejects_prompt_larger_than_context_window(temp_loaded):
+    temp_loaded.config.llm.context_window_tokens = 3001
+    client = LocalLLMClient(
+        temp_loaded.config,
+        PromptBook.from_file(temp_loaded.paths.prompts_path),
+        "x" * 20000,
+    )
+    snapshot = PageSnapshot(
+        url="https://example.test/careers",
+        final_url="https://example.test/careers",
+        title="Careers",
+        text="Open roles",
+    )
+
+    with pytest.raises(ContextWindowExceeded):
+        client.classify_links_batch(snapshot, [])

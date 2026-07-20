@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import posixpath
-import re
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 
 from .config import JobAgentConfig
-from .language import multilingual_job_terms, multilingual_role_terms
 
 
 def normalize_domain(netloc: str) -> str:
@@ -61,48 +59,28 @@ def clean_url(raw: str, base: str | None, config: JobAgentConfig) -> str | None:
         normalized_path = "/"
     if not normalized_path.startswith("/"):
         normalized_path = "/" + normalized_path
-    if normalized_path != "/":
-        normalized_path = normalized_path.rstrip("/")
+    if path.endswith("/") and normalized_path != "/":
+        normalized_path += "/"
 
     cleaned = urlunparse((parsed.scheme.lower(), netloc, normalized_path, "", query, ""))
     return cleaned
-
-
-def denied_by_safety(url: str, link_text: str, config: JobAgentConfig) -> bool:
-    haystacks = [url, link_text or ""]
-
-    for pattern in config.safety.deny_url_patterns:
-        if any(re.search(pattern, h) for h in haystacks):
-            return True
-
-    for pattern in config.safety.forbidden_link_text_patterns:
-        if re.search(pattern, link_text or ""):
-            return True
-
-    return False
 
 
 def source_key(url: str, config: JobAgentConfig) -> str:
     parsed = urlparse(url)
     domain = normalize_domain(parsed.netloc)
 
-    if config.memory.source_key_mode == "domain":
+    if config.crawler.source_key_mode == "domain":
         return domain
 
     parts = [p for p in parsed.path.split("/") if p]
-    if config.memory.source_key_mode == "domain_path1" and parts:
+    if config.crawler.source_key_mode == "domain_path1" and parts:
         return f"{domain}/{parts[0].lower()}"
-    if config.memory.source_key_mode == "domain_path2" and len(parts) >= 2:
+    if config.crawler.source_key_mode == "domain_path2" and len(parts) >= 2:
         return f"{domain}/{parts[0].lower()}/{parts[1].lower()}"
-    if config.memory.source_key_mode == "domain_path2" and parts:
+    if config.crawler.source_key_mode == "domain_path2" and parts:
         return f"{domain}/{parts[0].lower()}"
 
     return domain
-
-
-def domain_from_url(url: str) -> str:
-    return normalize_domain(urlparse(url).netloc)
-
-
 def render_query_url(query: str, template: str) -> str:
     return template.format(query=quote(query))

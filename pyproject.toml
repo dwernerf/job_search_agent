@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jobagent-local"
 version = "0.1.0"
-description = "Local autonomous job discovery agent using Playwright, SQLite memory, and an OpenAI-compatible local LLM server."
+description = "Local job discovery agent using Playwright, SQLite persistence, and an OpenAI-compatible LLM server."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

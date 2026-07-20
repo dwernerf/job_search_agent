@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
 
 from .config import JobAgentConfig
 
@@ -12,12 +11,6 @@ _STOP_COMPANY_TOKENS = {
     "inc", "ltd", "limited", "llc", "plc", "group", "holding", "holdings",
     "deutschland", "germany", "international", "global", "the", "and", "und",
 }
-
-
-@dataclass(frozen=True, slots=True)
-class CompanyMatch:
-    name: str
-    matched_by: str
 
 
 def normalize_text(value: str) -> str:
@@ -41,9 +34,7 @@ def company_aliases(name: str) -> list[str]:
     tokens = [tok for tok in norm.split() if tok and tok not in _STOP_COMPANY_TOKENS]
 
     aliases: list[str] = [norm]
-    if compact and compact != norm.replace(" ", ""):
-        aliases.append(compact)
-    elif compact:
+    if compact:
         aliases.append(compact)
 
     # The first distinctive token catches common shortened employer names, e.g.
@@ -98,8 +89,8 @@ def company_matches_text(company: str, *values: str) -> bool:
     return False
 
 
-def match_blacklist_company(config: JobAgentConfig, *values: str) -> CompanyMatch | None:
+def matches_blacklisted_company(config: JobAgentConfig, *values: str) -> bool:
     for company in config.companies.blacklist:
         if company_matches_text(company, *values):
-            return CompanyMatch(name=company, matched_by="blacklist")
-    return None
+            return True
+    return False
