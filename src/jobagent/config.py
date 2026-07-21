@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -40,6 +41,17 @@ def default_file_extensions() -> list[str]:
 
 def default_tracking_params() -> list[str]:
     return ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "ref", "source", "fbclid", "gclid"]
+
+
+def default_denied_url_patterns() -> list[str]:
+    return [
+        r"(?i)://(?:account|auth|login|signin)\.",
+        r"(?i)/(?:account|auth|authwall|cart|checkout|checkpoint|login|register|sign-in|signin|signup)(?:[/;?#]|$)",
+        r"(?i)(?:initiativ|initativ|spontan)bewerbung",
+        r"(?i)(?:speculative|unsolicited|spontaneous)[-_+/ ]*application",
+        r"(?i)talent[-_+/ ]*(?:pool|community)",
+        r"(?i)general[-_+/ ]*application",
+    ]
 
 
 def default_job_link_hints() -> list[str]:
@@ -155,6 +167,7 @@ class CrawlerConfig(StrictModel):
     excluded_domain_substrings: list[str] = Field(default_factory=default_excluded_domains)
     excluded_file_extensions: list[str] = Field(default_factory=default_file_extensions)
     dedupe_url_tracking_params: list[str] = Field(default_factory=default_tracking_params)
+    denied_url_patterns: list[str] = Field(default_factory=default_denied_url_patterns)
     job_link_hints: list[str] = Field(default_factory=default_job_link_hints)
     retry_error_pages: bool = True
     max_compact_lines: int = Field(default=180, gt=0)
@@ -162,6 +175,16 @@ class CrawlerConfig(StrictModel):
     max_page_text_chars: int = Field(default=14000, gt=0)
     batch_size_for_llm: int = Field(default=30, gt=0)
     max_page_context_chars: int = Field(default=5000, gt=0)
+
+    @field_validator("denied_url_patterns")
+    @classmethod
+    def valid_denied_url_patterns(cls, value: list[str]) -> list[str]:
+        for pattern in value:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid denied URL pattern: {pattern!r}") from exc
+        return value
 
 
 class MatchingConfig(StrictModel):
@@ -184,7 +207,6 @@ class ExplorationConfig(StrictModel):
 
 
 class BootstrappedSearchConfig(StrictModel):
-    max_samples: int = Field(default=50, gt=0)
     search_url_templates: list[str] = Field(default_factory=list)
     job_suffixes: list[str] = Field(default_factory=list)
     company_whitelist: list[str] = Field(default_factory=list)

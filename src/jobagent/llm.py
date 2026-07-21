@@ -59,7 +59,9 @@ class LocalLLMClient:
             entry = {
                 "index": item.get("index", 0),
                 "text": item.get("text") or "",
+                "original_url": item.get("original_url") or "",
                 "url": item.get("url") or "",
+                "page_title": item.get("page_title") or "",
                 "page_context": (item.get("page_context") or "")[:self.config.crawler.max_page_context_chars],
             }
             items.append(entry)

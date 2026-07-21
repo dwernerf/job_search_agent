@@ -26,6 +26,7 @@ class JobMatch:
     company: str
     location: str
     url: str
+    original_url: str
     fit_score: int
     reason: str
     evidence: str

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import posixpath
-from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
+import re
+from urllib.parse import parse_qsl, quote, unquote, unquote_plus, urlencode, urljoin, urlparse, urlunparse
 
 from .config import JobAgentConfig
+from .models import LinkCandidate
+
+
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def normalize_domain(netloc: str) -> str:
@@ -13,38 +18,38 @@ def normalize_domain(netloc: str) -> str:
     return domain
 
 
-def clean_url(raw: str, base: str | None, config: JobAgentConfig) -> str | None:
+def filter_url(raw: str, base: str | None, config: JobAgentConfig) -> str | None:
     if not raw:
         return None
 
     value = raw.strip()
-    lowered = value.lower()
-
-    if lowered.startswith(("mailto:", "tel:", "javascript:", "data:")):
+    if not value or _CONTROL_CHARACTERS.search(value):
         return None
 
-    joined = urljoin(base, value) if base else value
-    parsed = urlparse(joined)
-
-    if parsed.scheme.lower() not in {x.lower() for x in config.crawler.allowed_schemes}:
+    try:
+        joined = urljoin(base, value) if base else value
+        parsed = urlparse(joined)
+        hostname = parsed.hostname
+        parsed.port  # Force validation of malformed ports.
+    except ValueError:
         return None
 
-    if not parsed.netloc:
+    scheme = parsed.scheme.casefold()
+    if scheme not in {item.casefold() for item in config.crawler.allowed_schemes}:
+        return None
+
+    if not hostname:
         return None
 
     netloc = parsed.netloc.lower()
 
-    redirect_params = parse_qs(parsed.query)
-    if "duckduckgo.com" in netloc and "uddg" in redirect_params:
-        return clean_url(redirect_params["uddg"][0], None, config)
-    if "google." in netloc and parsed.path == "/url" and "q" in redirect_params:
-        return clean_url(redirect_params["q"][0], None, config)
-
-    if any(part.lower() in netloc for part in config.crawler.excluded_domain_substrings):
+    normalized_hostname = hostname.casefold()
+    if any(part.casefold() in normalized_hostname for part in config.crawler.excluded_domain_substrings):
         return None
 
     path = parsed.path or "/"
-    if any(path.lower().endswith(ext.lower()) for ext in config.crawler.excluded_file_extensions):
+    decoded_path = unquote(path).casefold()
+    if any(decoded_path.endswith(ext.casefold()) for ext in config.crawler.excluded_file_extensions):
         return None
 
     query_items = [
@@ -62,8 +67,39 @@ def clean_url(raw: str, base: str | None, config: JobAgentConfig) -> str | None:
     if path.endswith("/") and normalized_path != "/":
         normalized_path += "/"
 
-    cleaned = urlunparse((parsed.scheme.lower(), netloc, normalized_path, "", query, ""))
-    return cleaned
+    filtered = urlunparse((scheme, netloc, normalized_path, "", query, ""))
+    denial_target = urlunparse(
+        (
+            scheme,
+            netloc,
+            unquote(normalized_path),
+            "",
+            unquote_plus(query),
+            "",
+        )
+    )
+    if any(re.search(pattern, denial_target) for pattern in config.crawler.denied_url_patterns):
+        return None
+    return filtered
+
+
+def filter_links(
+    links: list[LinkCandidate],
+    source_url: str,
+    config: JobAgentConfig,
+) -> list[LinkCandidate]:
+    canonical_source = filter_url(source_url, None, config)
+    seen: set[str] = set()
+    filtered: list[LinkCandidate] = []
+
+    for link in links:
+        url = filter_url(link.url, source_url, config)
+        if not url or url == canonical_source or url in seen:
+            continue
+        seen.add(url)
+        filtered.append(LinkCandidate(text=link.text, url=url))
+
+    return filtered
 
 
 def source_key(url: str, config: JobAgentConfig) -> str:
@@ -82,5 +118,7 @@ def source_key(url: str, config: JobAgentConfig) -> str:
         return f"{domain}/{parts[0].lower()}"
 
     return domain
+
+
 def render_query_url(query: str, template: str) -> str:
     return template.format(query=quote(query))

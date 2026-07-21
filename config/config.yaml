@@ -11,7 +11,7 @@ app:
   jsonl_export_path: data/jobs.jsonl
   log_path: data/jobagent.log
 
-  # Browser/crawler user-agent string.
+  # Browser user agent used by the known-working crawler configuration.
   user_agent: JobMatchAgent/0.1 (+local personal job search; read-only)
 
 profile:
@@ -71,7 +71,7 @@ run:
   # when multiple URLs share the same insertion time (e.g. seed URLs).
   backlog_order: shuffle
 
-  # Delay after each processed backlog page.
+  # Interval between actual Playwright navigations. Set both to zero to disable.
   min_delay_seconds: 0.2
   max_delay_seconds: 0.8
 
@@ -110,9 +110,6 @@ seeding:
   mode: both
 
   bootstrapped_search:
-    # Maximum distinct role/suffix/company queries sampled per startup.
-    max_samples: 50
-
     # Search endpoints for bootstrapped queries.
     # Supported placeholder: {query} URL-encoded text.
     search_url_templates:

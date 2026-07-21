@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from jobagent.config import load_config
 
@@ -30,3 +32,20 @@ def test_llm_config_matches_yaml(sample_config_path):
     assert loaded.config.llm.context_window_tokens == raw["llm"]["context_window_tokens"]
     assert loaded.config.llm.thinking_enabled is True
     assert loaded.config.llm.timeout_seconds == raw["llm"]["timeout_seconds"]
+
+
+def test_browser_user_agent_and_url_denials_are_configured(sample_config_path):
+    loaded = load_config(sample_config_path)
+
+    assert loaded.config.app.user_agent.startswith("JobMatchAgent/")
+    assert loaded.config.crawler.denied_url_patterns
+    assert not hasattr(loaded.config.crawler, "forbidden_link_text_patterns")
+
+
+def test_invalid_denied_url_pattern_fails_config_validation(sample_config_path):
+    raw = yaml.safe_load(sample_config_path.read_text(encoding="utf-8"))
+    raw.setdefault("crawler", {})["denied_url_patterns"] = ["["]
+    sample_config_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        load_config(sample_config_path)

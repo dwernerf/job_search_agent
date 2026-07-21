@@ -108,6 +108,8 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Inside Sales
 - Team Lead
 - Department Lead
+- Abteilungsleiter
+- Teamleiter
 - Account Executive
 - Key Account Manager
 - Business Development

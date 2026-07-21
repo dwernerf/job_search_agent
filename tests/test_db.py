@@ -23,6 +23,7 @@ EXPECTED_COLUMNS = {
         "source_key",
         "first_seen_at",
         "last_seen_at",
+        "original_url",
     ],
     "pages": ["url", "final_url", "status"],
     "backlog": ["url", "status", "queued_at"],
@@ -44,17 +45,18 @@ def job(url: str = "https://jobs.test/1", *, title: str = "Buyer") -> JobMatch:
         company="Example",
         location="Munich",
         url=url,
+        original_url=url,
         fit_score=80,
         reason="Fit",
         evidence="Buying",
     )
 
 
-def test_fresh_database_creates_strict_v1_schema(tmp_path: Path, temp_loaded) -> None:
+def test_fresh_database_creates_strict_v2_schema(tmp_path: Path, temp_loaded) -> None:
     db = Database(tmp_path / "fresh.sqlite", temp_loaded.config)
 
-    assert db.conn.execute("pragma user_version").fetchone()[0] == 1
-    assert SCHEMA_VERSION == 1
+    assert db.conn.execute("pragma user_version").fetchone()[0] == 2
+    assert SCHEMA_VERSION == 2
     assert table_names(db.conn) == set(EXPECTED_COLUMNS)
     for table, expected_names in EXPECTED_COLUMNS.items():
         info = db.conn.execute(f"pragma table_info({table})").fetchall()
@@ -93,7 +95,7 @@ def test_future_schema_is_rejected(tmp_path: Path, temp_loaded) -> None:
         Database(path, temp_loaded.config)
 
 
-def test_malformed_v1_constraints_are_rejected(tmp_path: Path, temp_loaded) -> None:
+def test_malformed_v2_constraints_are_rejected(tmp_path: Path, temp_loaded) -> None:
     path = tmp_path / "malformed.sqlite"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -102,7 +104,8 @@ def test_malformed_v1_constraints_are_rejected(tmp_path: Path, temp_loaded) -> N
             url text primary key, title text not null, company text not null,
             location text not null, fit_score integer not null, reason text not null,
             evidence text not null, source_key text not null,
-            first_seen_at text not null, last_seen_at text not null
+            first_seen_at text not null, last_seen_at text not null,
+            original_url text not null
         )
         """
     )
@@ -116,7 +119,7 @@ def test_malformed_v1_constraints_are_rejected(tmp_path: Path, temp_loaded) -> N
     conn.commit()
     conn.close()
 
-    with pytest.raises(RuntimeError, match="invalid v1 primary key"):
+    with pytest.raises(RuntimeError, match="invalid v2 primary key"):
         Database(path, temp_loaded.config)
 
 
@@ -205,6 +208,7 @@ def test_job_upsert_preserves_first_seen_and_synchronizes_exports(
         "source_key",
         "first_seen_at",
         "last_seen_at",
+        "original_url",
     ]
     assert rows[0]["title"] == "Senior Buyer"
     exported = json.loads(jsonl_path.read_text(encoding="utf-8").strip())

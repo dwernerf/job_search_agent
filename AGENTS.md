@@ -14,11 +14,12 @@ Single-process Python app. Entry: `src/jobagent/agent.py:main()` → `JobAgent.r
 Key modules (all in `src/jobagent/`):
 - `config.py` — strict Pydantic config loading; copies personal intent values into runtime config and derives role/relevance terms from the profile.
 - `discover.py` — seed-file and bootstrap URL generation plus startup backlog seeding.
-- `db.py` — strict SQLite v1 persistence for `jobs`, `pages`, and `backlog`; synchronizes CSV/JSONL on open and after each non-empty job save.
+- `db.py` — strict SQLite v2 persistence for `jobs`, `pages`, and `backlog`; synchronizes CSV/JSONL on open and after each non-empty job save.
 - `company_filters.py` — company-blacklist matching only.
 - `llm.py` — OpenAI-compatible local LLM client, link-classification prompt rendering, and context-size estimation.
-- `browser.py` — Playwright page loading, anchor extraction, and `JobPosting` JSON-LD extraction.
+- `browser.py` — centrally paced Playwright loading, structured fetch errors, anchor extraction, and `JobPosting` JSON-LD extraction.
 - `extract.py` — page-text compaction and LLM JSON parsing.
+- `urltools.py` — the shared URL-only filtering/canonicalization policy and page-link deduplication.
 - `prompts.py` — prompt-template rendering.
 - `reporting.py` — structured progress logging. User-facing agent progress goes through `reporter.action()`; `self.logger` is for debug internals.
 
@@ -34,12 +35,16 @@ Key modules (all in `src/jobagent/`):
 
 ## Key operational facts
 - **LLM must be running first.** The agent checks `llm.base_url + /models` on startup; if unavailable it stops with `llm_unavailable_stop` rather than crawling blindly.
-- Pipeline: seed/bootstrap URL -> browser overview -> fetch each outbound destination context -> LLM `link_classifications` -> score threshold/company blacklist/URL dedup -> jobs; `explore` -> URL-only backlog.
+- Pipeline: filtered seed/bootstrap URL -> browser overview -> URL filter/dedup -> fetch each surviving outbound destination context -> LLM `link_classifications` -> score threshold/company blacklist/URL dedup -> jobs; `explore` -> URL-only backlog.
 - Outbound destinations are fetched before classification but are not queued unless classified as `explore`.
-- Runtime job acceptance is limited to the LLM type/score threshold, company blacklist, and URL deduplication. Location and exclusions remain LLM judgments; Python does not rescore them.
-- SQLite schema v1 contains only `jobs`, `pages`, and `backlog`. The backlog fields are `url`, `status`, and `queued_at`.
-- Job fields are `url`, `title`, `company`, `location`, `fit_score`, `reason`, `evidence`, `source_key`, `first_seen_at`, and `last_seen_at`.
-- CSV/JSONL fields are `fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, and `last_seen_at`.
+- URL filtering does not inspect link text, block submission endpoints, cap candidates per page, or contain provider-specific rules.
+- `run.min_delay_seconds` and `run.max_delay_seconds` control the single pacing interval between actual Playwright navigations.
+- Playwright uses the application user agent configured under `app.user_agent`.
+- HTTP and navigation failures are logged through structured `BrowserFetchError` diagnostics. Top-level statuses retain the `error:` prefix for configured later-run retries. Failed candidate context fetches are logged and excluded before the LLM call; they are not persisted as visited pages and do not make a successfully processed source retryable.
+- Runtime job acceptance is limited to a successfully fetched destination context, the LLM type/score threshold, company blacklist, and URL deduplication. Location and exclusions remain LLM judgments; Python does not rescore them.
+- SQLite schema v2 contains only `jobs`, `pages`, and `backlog`. The backlog fields are `url`, `status`, and `queued_at`.
+- Job fields are `url`, `title`, `company`, `location`, `fit_score`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, and `original_url`. `url` is the final fetched URL; `original_url` is the discovered pre-redirect URL.
+- CSV/JSONL fields are `fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, and `original_url`.
 - Database startup and each non-empty `save_jobs()` call rewrite both exports from all current jobs.
 - LLM `source_quality` and `source_notes` affect reporting only, not persistence or queue order.
 - `run.reset_backlog_on_start` clears backlog rows only. Jobs and visited-page rows remain.

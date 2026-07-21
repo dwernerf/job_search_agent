@@ -18,6 +18,7 @@ EXPORT_FIELDS = [
     "source_key",
     "first_seen_at",
     "last_seen_at",
+    "original_url",
 ]
 
 
@@ -38,6 +39,7 @@ def test_job_exports_use_the_public_schema(temp_loaded):
                 company="Example GmbH",
                 location="Munich",
                 url="https://example.test/jobs/supplier-quality-manager",
+                original_url="https://example.test/click/123",
                 fit_score=88,
                 reason="Supplier quality role in Munich",
                 evidence="Supplier Quality Manager",

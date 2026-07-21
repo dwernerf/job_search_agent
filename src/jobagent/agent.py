@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import logging
-import random
-import time
 from typing import Callable, Protocol
 
-from .browser import BrowserSession
+from .browser import BrowserFetchError, BrowserSession
 from .company_filters import matches_blacklisted_company
 from .config import LoadedConfig, ensure_data_dirs, load_config
 from .db import Database
@@ -16,7 +14,7 @@ from .logging_utils import setup_logging
 from .models import JobMatch, LinkCandidate, PageDecision, PageSnapshot
 from .prompts import PromptBook
 from .reporting import ActionReporter
-from .urltools import clean_url, source_key
+from .urltools import filter_links, filter_url, source_key
 
 
 class BrowserClient(Protocol):
@@ -98,20 +96,16 @@ class JobAgent:
                 snapshot = PageSnapshot(url=item_url, final_url=item_url, title="", text="")
                 saved = 0
                 high_fit_count = 0
+                candidate_fetch_failures = 0
 
                 try:
                     snapshot = browser.fetch(item_url)
                     final_url = snapshot.final_url or snapshot.url
-                    candidate_links: list[LinkCandidate] = []
-                    seen_candidate_urls: set[str] = set()
-                    for link in snapshot.links:
-                        cleaned_url = clean_url(link.url, final_url, self.config)
-                        if not cleaned_url or cleaned_url in seen_candidate_urls:
-                            continue
-                        seen_candidate_urls.add(cleaned_url)
-                        candidate_links.append(
-                            LinkCandidate(text=link.text, url=cleaned_url)
-                        )
+                    candidate_links = filter_links(
+                        snapshot.links,
+                        final_url,
+                        self.config,
+                    )
                     self.reporter.action(
                         "page_fetched",
                         title=snapshot.title,
@@ -123,6 +117,7 @@ class JobAgent:
                     enqueued = 0
                     first_source_quality = 0
                     first_source_notes = ""
+                    source_assessed = False
                     batch_size = self.config.crawler.batch_size_for_llm
 
                     # Build batches
@@ -141,18 +136,69 @@ class JobAgent:
                         )
                         # Fetch page_context for each link in the batch
                         links_with_context: list[dict[str, str]] = []
-                        for batch_idx_inner, link in enumerate(batch):
+                        fetched_links: list[LinkCandidate] = []
+                        batch_fetch_failures_before = candidate_fetch_failures
+                        for link in batch:
                             try:
                                 ctx_snapshot = browser.fetch(link.url)
                                 page_context = compact_text(ctx_snapshot.text, self.config)
+                            except BrowserFetchError as exc:
+                                candidate_fetch_failures += 1
+                                self.reporter.action(
+                                    "link_candidate_fetch_failed",
+                                    status=exc.page_status,
+                                    url=link.url,
+                                    # reason=str(exc)[:500],
+                                    # **exc.report_fields(),
+                                )
+                                continue
                             except Exception as exc:
-                                page_context = f"[fetch error: {type(exc).__name__}]"
+                                candidate_fetch_failures += 1
+                                self.reporter.action(
+                                    "link_candidate_fetch_failed",
+                                    status=f"error:{type(exc).__name__}",
+                                    url=link.url,
+                                    # reason=str(exc)[:500],
+                                )
+                                continue
+                            candidate_final_url = filter_url(
+                                ctx_snapshot.final_url or link.url,
+                                None,
+                                self.config,
+                            )
+                            if not candidate_final_url:
+                                self.reporter.action(
+                                    "candidate_url_dropped",
+                                    url=link.url,
+                                    reason="final URL rejected by URL policy",
+                                )
+                                continue
+                            fetched_links.append(link)
                             links_with_context.append({
-                                "index": str(batch_idx_inner),
+                                "index": str(len(links_with_context)),
                                 "text": link.text,
-                                "url": link.url,
+                                "original_url": link.url,
+                                "url": candidate_final_url,
+                                "page_title": ctx_snapshot.title,
                                 "page_context": page_context,
                             })
+
+                        batch_fetch_failures = (
+                            candidate_fetch_failures - batch_fetch_failures_before
+                        )
+                        if not links_with_context:
+                            self.reporter.action(
+                                "batch_complete",
+                                batch=f"{batch_idx + 1}/{len(batches)}",
+                                saved=0,
+                                high_fit=0,
+                                enqueued=0,
+                                fetch_failed=batch_fetch_failures,
+                                queued=self.db.queued_count(),
+                                source_quality=0,
+                                source_notes="No candidate destination was fetched successfully",
+                            )
+                            continue
 
                         # Classify batch
                         try:
@@ -162,7 +208,7 @@ class JobAgent:
                             )
                         except ContextWindowExceeded as e:
                             self.reporter.action("context_window_exceeded", batch=batch_idx, links=len(links_with_context), reason=str(e)[:500])
-                            deferred_link = batch[len(links_with_context) - 1]
+                            deferred_link = fetched_links.pop()
                             links_with_context.pop()
                             if not links_with_context:
                                 self.reporter.action("batch_failed_context_window", reason="single link exceeds context window")
@@ -173,9 +219,10 @@ class JobAgent:
                                 links_with_context=links_with_context,
                             )
 
-                        if batch_idx == 0:
+                        if not source_assessed:
                             first_source_quality = classification.source_quality
                             first_source_notes = classification.source_notes
+                            source_assessed = True
 
                         # The model omits URLs; bind each result to its supplied context.
                         context_by_index = {
@@ -219,6 +266,7 @@ class JobAgent:
                                     company=c.company,
                                     location=c.location,
                                     url=c.url,
+                                    original_url=context_by_index[c.index]["original_url"],
                                     fit_score=c.fit_score,
                                     reason=c.reason,
                                     evidence=c.evidence,
@@ -246,7 +294,7 @@ class JobAgent:
                         high_fit_count += batch_high_fit
                         for job in cleaned:
                             self.db.record_page(
-                                url=job.url,
+                                url=job.original_url,
                                 final_url=job.url,
                                 status="ok",
                             )
@@ -257,6 +305,7 @@ class JobAgent:
                             saved=page_saved,
                             high_fit=batch_high_fit,
                             enqueued=enqueued - batch_enqueued_before,
+                            fetch_failed=batch_fetch_failures,
                             queued=self.db.queued_count(),
                             source_quality=classification.source_quality,
                             source_notes=classification.source_notes,
@@ -272,15 +321,11 @@ class JobAgent:
                                 self.logger.debug("classify index=%d url=%s type=%s fit=%d reason=%s\n--- page_context ---\n%s\n--- end page_context ---",
                                                   c.index, c.url, c.type, c.fit_score, (c.reason or ""), page_ctx)
 
-                    self.db.record_page(
-                        url=item_url,
-                        final_url=final_url,
-                        status="ok",
-                    )
-
+                    page_status = "ok"
+                    self.db.record_page(url=item_url, final_url=final_url, status=page_status)
                     self.db.mark_backlog(item_url, "done")
                     self.reporter.record_page(
-                        status="ok",
+                        status=page_status,
                         jobs_saved=saved,
                         high_fit_jobs=high_fit_count,
                         source_quality=first_source_quality,
@@ -290,6 +335,7 @@ class JobAgent:
                         saved=saved,
                         high_fit=high_fit_count,
                         enqueued=enqueued,
+                        fetch_failed=candidate_fetch_failures,
                         queued=self.db.queued_count(),
                         source_quality=first_source_quality,
                         source_notes=first_source_notes,
@@ -304,21 +350,32 @@ class JobAgent:
                     )
 
                 except Exception as exc:
-                    page_status = f"error:{type(exc).__name__}"
+                    if isinstance(exc, BrowserFetchError):
+                        page_status = exc.page_status
+                        final_url = exc.final_url or snapshot.final_url or item_url
+                        error_fields = exc.report_fields()
+                    else:
+                        page_status = f"error:{type(exc).__name__}"
+                        final_url = snapshot.final_url or item_url
+                        error_fields = {}
                     self.db.record_page(
                         url=item_url,
-                        final_url=snapshot.final_url or item_url,
+                        final_url=final_url,
                         status=page_status,
                     )
                     self.db.mark_backlog(item_url, "error")
-                    self.reporter.action("page_failed", status=page_status, url=item_url, reason=str(exc)[:500])
+                    self.reporter.action(
+                        "page_failed",
+                        status=page_status,
+                        url=item_url,
+                        # reason=str(exc)[:500],
+                        # **error_fields,
+                    )
                     self.reporter.record_page(
                         status=page_status,
                         jobs_saved=saved,
                         high_fit_jobs=high_fit_count,
                     )
-
-                self._delay()
 
         self.reporter.action(
             "run_complete",
@@ -360,15 +417,6 @@ class JobAgent:
 
     def _company_blacklisted(self, job: JobMatch) -> bool:
         return matches_blacklisted_company(self.config, job.company, job.title, job.url, job.reason, job.evidence)
-
-    def _delay(self) -> None:
-        delay = random.uniform(
-            self.config.run.min_delay_seconds,
-            self.config.run.max_delay_seconds,
-        )
-        if delay > 0:
-            time.sleep(delay)
-
 
 def main() -> int:
     loaded = load_config()

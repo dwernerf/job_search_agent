@@ -46,27 +46,9 @@ def test_bootstrap_queries_inject_whitelist_deterministically(temp_loaded, monke
     assert all(query.endswith("Zeiss") for query in queries)
 
 
-def test_bootstrap_queries_respect_max_samples(temp_loaded):
-    temp_loaded.config.seeding.bootstrapped_search.max_samples = 3
+def test_bootstrap_queries_generate_one_query_per_distinct_role(temp_loaded):
+    temp_loaded.config.target.roles = ["Role A", "Role B", "Role A"]
 
     queries = bootstrap_queries(temp_loaded.config)
 
-    assert len(queries) == 3
-
-
-def test_bootstrap_queries_cycle_shuffled_roles(temp_loaded, monkeypatch):
-    search = temp_loaded.config.seeding.bootstrapped_search
-    temp_loaded.config.target.roles = ["Role A", "Role B"]
-    search.job_suffixes = ["jobs", "careers"]
-    search.company_whitelist = []
-    search.max_samples = 4
-    monkeypatch.setattr("jobagent.discover.random.shuffle", lambda values: values.reverse())
-
-    queries = bootstrap_queries(temp_loaded.config)
-
-    assert queries == [
-        "Role B Munich jobs",
-        "Role A Munich jobs",
-        "Role B Munich careers",
-        "Role A Munich careers",
-    ]
+    assert queries == ["Role A Munich job offerings", "Role B Munich job offerings"]

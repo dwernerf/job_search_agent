@@ -11,9 +11,9 @@ from .config import JobAgentConfig
 from .models import JobMatch
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-_V1_COLUMNS = {
+_V2_COLUMNS = {
     "jobs": (
         "url",
         "title",
@@ -25,6 +25,7 @@ _V1_COLUMNS = {
         "source_key",
         "first_seen_at",
         "last_seen_at",
+        "original_url",
     ),
     "pages": ("url", "final_url", "status"),
     "backlog": ("url", "status", "queued_at"),
@@ -72,27 +73,27 @@ class Database:
             )
         tables = self._table_names()
         if version == SCHEMA_VERSION:
-            self._validate_v1_schema()
+            self._validate_v2_schema()
             return
         if tables:
             raise RuntimeError(
                 "legacy database schemas are not supported; delete the database "
-                "and restart to create schema v1"
+                "and restart to create schema v2"
             )
-        self._create_fresh_v1()
+        self._create_fresh_v2()
 
-    def _create_fresh_v1(self) -> None:
+    def _create_fresh_v2(self) -> None:
         try:
             self.conn.execute("begin immediate")
-            self._create_v1_tables()
-            self._validate_v1_schema()
+            self._create_v2_tables()
+            self._validate_v2_schema()
             self.conn.execute(f"pragma user_version = {SCHEMA_VERSION}")
             self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
 
-    def _create_v1_tables(self) -> None:
+    def _create_v2_tables(self) -> None:
         self.conn.execute(
             """
             create table jobs (
@@ -105,7 +106,8 @@ class Database:
                 evidence text not null,
                 source_key text not null,
                 first_seen_at text not null,
-                last_seen_at text not null
+                last_seen_at text not null,
+                original_url text not null
             )
             """
         )
@@ -128,24 +130,24 @@ class Database:
             """
         )
 
-    def _validate_v1_schema(self) -> None:
+    def _validate_v2_schema(self) -> None:
         tables = self._table_names()
-        if tables != set(_V1_COLUMNS):
-            raise RuntimeError(f"invalid v1 database tables: {sorted(tables)}")
-        for table, expected_columns in _V1_COLUMNS.items():
+        if tables != set(_V2_COLUMNS):
+            raise RuntimeError(f"invalid v2 database tables: {sorted(tables)}")
+        for table, expected_columns in _V2_COLUMNS.items():
             info = self.conn.execute(f"pragma table_info({table})").fetchall()
             columns = tuple(str(row["name"]) for row in info)
             if columns != expected_columns:
-                raise RuntimeError(f"invalid v1 schema for table {table}: {list(columns)}")
+                raise RuntimeError(f"invalid v2 schema for table {table}: {list(columns)}")
             for row in info:
                 name = str(row["name"])
                 if str(row["type"]).upper() != ("INTEGER" if name == "fit_score" else "TEXT"):
-                    raise RuntimeError(f"invalid v1 column type for {table}.{name}")
+                    raise RuntimeError(f"invalid v2 column type for {table}.{name}")
                 if name == "url":
                     if int(row["pk"]) != 1 or int(row["notnull"]) != 1:
-                        raise RuntimeError(f"invalid v1 primary key for {table}.url")
+                        raise RuntimeError(f"invalid v2 primary key for {table}.url")
                 elif int(row["pk"]) != 0 or int(row["notnull"]) != 1:
-                    raise RuntimeError(f"invalid v1 nullability for {table}.{name}")
+                    raise RuntimeError(f"invalid v2 nullability for {table}.{name}")
 
     def _table_names(self) -> set[str]:
         return {
@@ -248,8 +250,8 @@ class Database:
                     """
                     insert into jobs(
                         url, title, company, location, fit_score, reason, evidence,
-                        source_key, first_seen_at, last_seen_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        source_key, first_seen_at, last_seen_at, original_url
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(url) do update set
                         title = excluded.title,
                         company = excluded.company,
@@ -258,7 +260,8 @@ class Database:
                         reason = excluded.reason,
                         evidence = excluded.evidence,
                         source_key = excluded.source_key,
-                        last_seen_at = excluded.last_seen_at
+                        last_seen_at = excluded.last_seen_at,
+                        original_url = excluded.original_url
                     """,
                     (
                         job.url,
@@ -271,6 +274,7 @@ class Database:
                         source_key,
                         timestamp,
                         timestamp,
+                        job.original_url,
                     ),
                 )
                 saved += 1
@@ -290,7 +294,7 @@ class Database:
         return self.conn.execute(
             """
             select fit_score, title, company, location, url, reason, evidence,
-                   source_key, first_seen_at, last_seen_at
+                   source_key, first_seen_at, last_seen_at, original_url
             from jobs
             order by fit_score desc, last_seen_at desc
             """
@@ -315,6 +319,7 @@ class Database:
                         "source_key",
                         "first_seen_at",
                         "last_seen_at",
+                        "original_url",
                     ]
                 )
                 writer.writerows(rows)
@@ -335,7 +340,7 @@ class Database:
             temporary.unlink(missing_ok=True)
 
     def count_rows(self, table: str) -> int:
-        if table not in _V1_COLUMNS:
+        if table not in _V2_COLUMNS:
             raise ValueError(f"unknown table: {table}")
         row = self.conn.execute(f"select count(*) from {table}").fetchone()
         return int(row[0])

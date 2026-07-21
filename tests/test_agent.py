@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
 from jobagent.agent import JobAgent
+from jobagent.browser import BrowserFetchError
 from jobagent.db import Database
 from jobagent.llm import ContextWindowExceeded
 from jobagent.models import LinkCandidate, LinkClassification, PageDecision, PageSnapshot
 
 
 class FakeBrowser:
-    def __init__(self, pages: dict[str, PageSnapshot]) -> None:
+    def __init__(self, pages: Mapping[str, PageSnapshot | Exception]) -> None:
         self.pages = pages
         self.opened: list[str] = []
 
@@ -21,7 +24,10 @@ class FakeBrowser:
 
     def fetch(self, url: str) -> PageSnapshot:
         self.opened.append(url)
-        return self.pages[url]
+        result = self.pages[url]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class StaticLLM:
@@ -141,6 +147,160 @@ def test_agent_canonicalizes_candidates_and_binds_returned_url(temp_loaded):
 
     assert db.conn.execute("select url from jobs").fetchone()["url"] == job_url
     assert browser.opened == [source_url, job_url]
+    db.close()
+
+
+def test_agent_records_structured_top_level_browser_error(temp_loaded):
+    source_url = "https://search.example.test/jobs"
+    final_url = "https://search.example.test/blocked"
+    temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
+    error = BrowserFetchError(
+        kind="http",
+        phase="navigation",
+        requested_url=source_url,
+        final_url=final_url,
+        status_code=429,
+        status_text="Too Many Requests",
+        headers={"retry-after": "120"},
+        body_excerpt="Rate limit exceeded",
+        elapsed_ms=250,
+    )
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: FakeBrowser({source_url: error}),
+        llm_client=StaticLLM(
+            PageDecision(source_quality=0, source_notes="", link_classifications=[])
+        ),
+    ).run() == 0
+
+    row = db.conn.execute(
+        "select final_url, status from pages where url = ?", (source_url,)
+    ).fetchone()
+    assert dict(row) == {"final_url": final_url, "status": "error:http_429"}
+    db.close()
+
+
+def test_candidate_browser_error_is_not_sent_to_llm_or_retried_with_source(temp_loaded):
+    source_url = "https://alpha.test/careers"
+    job_url = "https://alpha.test/jobs/buyer"
+    temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
+    error = BrowserFetchError(
+        kind="http",
+        phase="navigation",
+        requested_url=job_url,
+        final_url=job_url,
+        status_code=503,
+        status_text="Unavailable",
+    )
+    llm = StaticLLM(
+        PageDecision(
+            source_quality=20,
+            source_notes="Destination unavailable",
+            link_classifications=[
+                LinkClassification(
+                    index=0,
+                    type="job_listing",
+                    fit_score=99,
+                    title="Invented Buyer",
+                    company="Alpha",
+                    location="Munich",
+                )
+            ],
+        )
+    )
+    browser = FakeBrowser(
+        {
+            source_url: snapshot(
+                source_url,
+                text="Careers",
+                links=[LinkCandidate(text="Buyer", url=job_url)],
+            ),
+            job_url: error,
+        }
+    )
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: browser,
+        llm_client=llm,
+    ).run() == 0
+
+    assert llm.calls == []
+    assert db.page_status(source_url) == "ok"
+    assert db.page_status(job_url) is None
+    assert db.count_rows("jobs") == 0
+    backlog_status = db.conn.execute(
+        "select status from backlog where url = ?", (source_url,)
+    ).fetchone()["status"]
+    assert backlog_status == "done"
+    assert browser.opened == [source_url, job_url]
+    db.close()
+
+    reopened = Database(temp_loaded.paths.database_path, temp_loaded.config)
+    assert reopened.pop_backlog() is None
+    reopened.close()
+
+
+def test_agent_sends_only_successfully_fetched_candidates_to_llm(temp_loaded):
+    source_url = "https://alpha.test/careers"
+    failed_url = "https://alpha.test/jobs/unavailable"
+    job_url = "https://alpha.test/jobs/buyer"
+    temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
+    llm = StaticLLM(
+        PageDecision(
+            source_quality=80,
+            source_notes="One fetched job",
+            link_classifications=[
+                LinkClassification(
+                    index=0,
+                    type="job_listing",
+                    fit_score=85,
+                    title="Buyer",
+                    company="Alpha",
+                    location="Munich",
+                )
+            ],
+        )
+    )
+    browser = FakeBrowser(
+        {
+            source_url: snapshot(
+                source_url,
+                text="Careers",
+                links=[
+                    LinkCandidate(text="Unavailable", url=failed_url),
+                    LinkCandidate(text="Buyer", url=job_url),
+                ],
+            ),
+            failed_url: RuntimeError("navigation failed"),
+            job_url: snapshot(job_url, text="Buyer in Munich"),
+        }
+    )
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: browser,
+        llm_client=llm,
+    ).run() == 0
+
+    assert len(llm.calls) == 1
+    assert len(llm.calls[0][1]) == 1
+    llm_link = llm.calls[0][1][0]
+    assert llm_link["index"] == "0"
+    assert llm_link["text"] == "Buyer"
+    assert llm_link["url"] == job_url
+    assert "Buyer in Munich" in llm_link["page_context"]
+    assert db.conn.execute("select url from jobs").fetchone()["url"] == job_url
+    assert db.page_status(source_url) == "ok"
+    assert db.page_status(failed_url) is None
+    assert browser.opened == [source_url, failed_url, job_url]
     db.close()
 
 

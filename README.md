@@ -45,13 +45,15 @@ The agent runs one queue-driven loop:
 1. **Check the LLM** - when enabled, request the configured `/models` endpoint before opening a browser.
 2. **Seed the backlog** - enqueue URLs from `config/seeds.txt`, generated bootstrap searches, or both.
 3. **Open a backlog page** - Playwright captures its final URL, title, body text, links, and any `JobPosting` JSON-LD rendered as text.
-4. **Fetch outbound destinations** - for every link in the current batch, Playwright opens the destination and compacts its text into `page_context`. A destination fetch failure is represented in that context instead of stopping the batch.
+4. **Filter and fetch outbound destinations** - URLs are normalized, checked against URL-only crawl rules, stripped of tracking parameters, and deduplicated before Playwright opens every surviving destination and compacts its text into `page_context`. Failed destinations are logged and excluded before classification.
 5. **Classify the links** - the LLM receives the overview page plus each link's text, URL, and destination context. It returns `link_classifications` with type `job_listing`, `explore`, or `skip`.
 6. **Route classifications** - a `job_listing` at or above `scoring.min_score_to_export` becomes a job candidate. An `explore` URL enters the backlog when exploration is enabled. A `skip` result is ignored.
 7. **Filter and save** - Python applies the company blacklist, removes duplicate job URLs from the batch, and upserts jobs by URL. CSV and JSONL are rewritten from SQLite after each non-empty save.
 8. **Continue** - the source backlog page is marked complete and the loop runs until no queued URL remains.
 
 Fetching an outbound destination for classification does not automatically queue it. Only links classified as `explore` enter the URL-only backlog. `source_quality` and `source_notes` returned by the LLM are used in run reporting, not queue priority.
+
+Every Playwright navigation passes through one global pacing interval configured by `run.min_delay_seconds` and `run.max_delay_seconds`. Playwright uses the application user agent configured under `app.user_agent`.
 
 ### Seeds and bootstrap searches
 
@@ -104,8 +106,8 @@ Key areas to review:
 
 - **`llm`** - endpoint, model, `context_window_tokens`, timeout, temperature, thinking mode, and JSON response format
 - **`browser`** - headless mode and navigation behavior
-- **`run`** - backlog reset, FIFO or shuffled ordering, and delays
-- **`crawler`** - exported `source_key` grouping, failed-page retries, LLM batch size, and destination-context size
+- **`run`** - backlog reset, FIFO or shuffled ordering, and the interval between Playwright navigations
+- **`crawler`** - URL normalization/denial rules, exported `source_key` grouping, failed-page retries, LLM batch size, and destination-context size
 - **`scoring`** - minimum saved score and the threshold used only for high-fit reporting
 - **`exploration`** - whether LLM-classified `explore` URLs enter the backlog
 - **`seeding`** - seed/bootstrap mode, search URL templates, and job suffixes
@@ -151,22 +153,27 @@ Relative profile, seed, prompt, and output paths are resolved from that configur
 
 ## Persistence and filtering
 
-SQLite schema version 1 contains exactly three tables:
+SQLite schema version 2 contains exactly three tables:
 
 | Table | Fields |
 |---|---|
-| `jobs` | `url`, `title`, `company`, `location`, `fit_score`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at` |
+| `jobs` | `url`, `title`, `company`, `location`, `fit_score`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, `original_url` |
 | `pages` | `url`, `final_url`, `status` |
 | `backlog` | `url`, `status`, `queued_at` |
 
 `pages` supplies visited-URL state; failed pages can be retried when `crawler.retry_error_pages` is enabled. The backlog stores no depth or discovery metadata. Enabling `run.reset_backlog_on_start` clears only backlog rows, while saved jobs and visited pages remain.
 
-Legacy database schemas are not migrated. Delete an old database before starting this version. Interrupted `active` backlog rows in a valid v1 database are returned to `queued` when the database is reopened.
+The same URL policy is used for seeds, generated searches, and page links. It accepts configured HTTP schemes; requires a host; rejects configured domains, file extensions, login/account URLs, and initiative/talent-pool/general-application URLs; removes configured tracking parameters and fragments; and normalizes paths. Page links resolving to the source page or to an already-seen canonical URL are removed.
+
+Filtering is URL-only. Link text is not inspected, submission endpoints such as `/apply/submit` are not denied, and there is no per-page candidate limit or provider-specific rule. Every unique URL that passes the policy is fetched before LLM classification.
+
+Legacy database schemas are not migrated. Delete an old database before starting this version. Interrupted `active` backlog rows in a valid v2 database are returned to `queued` when the database is reopened.
 
 For a saved job, `source_key` is derived from the backlog page being processed according to `crawler.source_key_mode`. An upsert preserves `first_seen_at`, updates the other job fields, and refreshes `last_seen_at`.
 
 The LLM decides whether a destination is a job and supplies its score and fields. Runtime job acceptance then consists of:
 
+- a successfully fetched destination context
 - `type == "job_listing"`
 - `fit_score >= scoring.min_score_to_export`
 - no company-blacklist match across the returned job text and URL
@@ -187,16 +194,18 @@ The client estimates prompt size with a character-based heuristic and reserves 3
 
 | File | Description |
 |---|---|
-| `data/jobs.sqlite` | SQLite v1 jobs, visited pages, and URL backlog |
+| `data/jobs.sqlite` | SQLite v2 jobs, visited pages, and URL backlog |
 | `data/jobs.csv` | Spreadsheet-friendly job rows |
 | `data/jobs.jsonl` | The same job rows as newline-delimited JSON objects |
 | `data/jobagent.log` | Run log |
 
 CSV and JSONL use these fields, in this order:
 
-`fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`
+`fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, `original_url`
 
 Both exports are synchronized from all SQLite job rows on database startup and after every `save_jobs()` call that writes at least one job. Rows are ordered by descending fit score and then most recent `last_seen_at`.
+
+For failed browser navigations, the log includes a safe diagnostic subset: failure phase, final URL, status/status text, elapsed time, selected rate-limit/server/request headers, and a flattened response-body excerpt. Cookie and authorization headers are never logged. Top-level failures persist concise statuses such as `error:http_429` or `error:navigation_timeout`. A failed candidate is logged, excluded from the LLM request, and not persisted as a visited page. If the source itself loaded and was processed, it is still marked complete.
 
 Inspect top jobs:
 
@@ -219,7 +228,7 @@ rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl
 scripts/test.sh
 ```
 
-This runs pytest followed by `compileall`; `make test` runs pytest only. Test files cover configuration and profile derivation, bootstrap seeding, URL handling, link-classification routing, company filtering, the SQLite v1 schema and exports, LLM JSON/context handling, and reporting. Agent tests use fake browser/LLM implementations where supplied.
+This runs pytest followed by `compileall`; `make test` runs pytest only. Test files cover configuration and profile derivation, bootstrap seeding, URL handling, link-classification routing, company filtering, the SQLite v2 schema and exports, LLM JSON/context handling, and reporting. Agent tests use fake browser/LLM implementations where supplied.
 
 The suite is network-isolated; agent tests use fake browser and LLM implementations.
 
