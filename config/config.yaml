@@ -64,7 +64,7 @@ run:
   # Clear the backlog at each start. This prevents stale backlog items from
   # an older mode/profile run from dragging the agent into irrelevant pages.
   # It does not delete jobs or visited-page state.
-  reset_backlog_on_start: false
+  reset_backlog_on_start: true
 
   # Backlog queue ordering: "fifo" (insertion order) or "shuffle" (random).
   # Shuffle prevents the agent from always following the same traversal path
@@ -110,6 +110,9 @@ seeding:
   mode: both
 
   bootstrapped_search:
+    # Maximum distinct role/suffix/company queries sampled per startup.
+    max_samples: 50
+
     # Search endpoints for bootstrapped queries.
     # Supported placeholder: {query} URL-encoded text.
     search_url_templates:

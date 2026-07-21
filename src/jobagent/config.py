@@ -207,6 +207,7 @@ class ExplorationConfig(StrictModel):
 
 
 class BootstrappedSearchConfig(StrictModel):
+    max_samples: int = Field(default=50, gt=0)
     search_url_templates: list[str] = Field(default_factory=list)
     job_suffixes: list[str] = Field(default_factory=list)
     company_whitelist: list[str] = Field(default_factory=list)

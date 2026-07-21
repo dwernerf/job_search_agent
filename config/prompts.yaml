@@ -33,11 +33,9 @@ page_analysis_user: |-
 
   Classification Guidance:
   - Classify each link independently using only that link's page_title and page_context. Do not use the overview text or another link's context to fill in missing job details.
-  - Determine whether the entire destination page is one specific job posting before evaluating fit.
-  - A search result, job overview, or company careers page containing multiple jobs is always "explore"
 
   Link classification types:
-  - job_listing: The entire destination page is dedicated to one specific job and contains its actual title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context. Include fit_score, title, company, location, evidence, and reason.
+  - job_listing: The destination page is dedicated to one specific job and contains its actual title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context. Include fit_score, title, company, location, evidence, and reason.
   - explore: The destination is useful for future browsing because it contains links to potentially relevant job postings, including search results, job overviews, and company careers pages. There must be a high chance that they are located in the target search area and be relevant for the person we are looking for, otherwise skip. fit_score = 0.
   - skip: The destination is not useful (e.g., footer, cookie policy, login, legal, generic page, different search area, not relevant for searches for the target role). Also use "skip" if page_context is empty. fit_score = 0.
 

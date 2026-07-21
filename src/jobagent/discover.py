@@ -25,19 +25,43 @@ def read_seed_urls(path: Path, config: JobAgentConfig) -> list[str]:
 
 
 def bootstrap_queries(config: JobAgentConfig) -> list[str]:
-    """Generate one role/city query per distinct target role."""
+    """Sample distinct role/city/suffix/company queries in shuffled role rounds."""
     city = config.target.local_area.split(",")[0].strip()
     roles = list(dict.fromkeys(config.target.roles))
-    suffixes = config.seeding.bootstrapped_search.job_suffixes
-    companies = config.seeding.bootstrapped_search.company_whitelist
-    queries: list[str] = []
+    suffixes = list(dict.fromkeys(config.seeding.bootstrapped_search.job_suffixes)) or [""]
+    companies = list(dict.fromkeys(config.seeding.bootstrapped_search.company_whitelist))
+    max_samples = config.seeding.bootstrapped_search.max_samples
 
-    for role in roles:
-        suffix = random.choice(suffixes) if suffixes else ""
-        company = random.choice(companies) if companies and random.random() < 0.5 else ""
-        query = " ".join(part for part in (role, city, suffix, company) if part)
-        if query not in queries:
-            queries.append(query)
+    available = {
+        role: [(suffix, company) for suffix in suffixes for company in ["", *companies]]
+        for role in roles
+    }
+    queries: list[str] = []
+    seen: set[str] = set()
+
+    while len(queries) < max_samples:
+        active_roles = [role for role in roles if available[role]]
+        if not active_roles:
+            break
+        random.shuffle(active_roles)
+
+        for role in active_roles:
+            options = available[role]
+            with_company = [option for option in options if option[1]]
+            without_company = [option for option in options if not option[1]]
+            prefer_company = bool(companies) and random.random() < 0.5
+            candidates = with_company if prefer_company else without_company
+            if not candidates:
+                candidates = without_company if prefer_company else with_company
+
+            suffix, company = random.choice(candidates)
+            options.remove((suffix, company))
+            query = " ".join(part for part in (role, city, suffix, company) if part)
+            if query not in seen:
+                seen.add(query)
+                queries.append(query)
+            if len(queries) >= max_samples:
+                break
 
     return queries
 
