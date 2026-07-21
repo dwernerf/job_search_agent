@@ -21,10 +21,6 @@ class ActionReporter:
     only user-facing verbosity switch is logging.level: "info" or "debug".
     """
 
-    DEBUG_ONLY_EVENTS = {
-        "skip_visited",
-    }
-
     RESULT_EVENTS = {
         "seed_backlog",
         "page_fetched",
@@ -48,8 +44,7 @@ class ActionReporter:
     def action(self, name: str, **fields: Any) -> None:
         self.stats.actions += 1
         prefix = "RESULT" if name in self.RESULT_EVENTS else "STEP"
-        level = logging.DEBUG if name in self.DEBUG_ONLY_EVENTS else logging.INFO
-        self.logger.log(level, "%s %s %s", prefix, name, self._format_fields(fields))
+        self.logger.info("%s %s %s", prefix, name, self._format_fields(fields))
 
     def record_page(
         self,

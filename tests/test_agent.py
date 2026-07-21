@@ -175,6 +175,7 @@ def test_agent_records_structured_top_level_browser_error(temp_loaded):
 def test_candidate_browser_error_is_not_sent_to_llm_or_retried_with_source(temp_loaded):
     source_url = "https://alpha.test/careers"
     job_url = "https://alpha.test/jobs/buyer"
+    temp_loaded.config.crawler.retry_error_pages = False
     temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
     error = BrowserFetchError(
         kind="http",
@@ -217,18 +218,87 @@ def test_candidate_browser_error_is_not_sent_to_llm_or_retried_with_source(temp_
 
     assert llm.calls == []
     assert db.page_status(source_url) == "ok"
-    assert db.page_status(job_url) is None
+    assert db.page_status(job_url) == "error:http_503"
     assert db.count_rows("jobs") == 0
-    backlog_status = db.conn.execute(
+    assert db.conn.execute(
         "select status from backlog where url = ?", (source_url,)
-    ).fetchone()["status"]
-    assert backlog_status == "done"
+    ).fetchone() is None
     assert browser.opened == [source_url, job_url]
     db.close()
 
     reopened = Database(temp_loaded.paths.database_path, temp_loaded.config)
     assert reopened.pop_backlog() is None
     reopened.close()
+
+
+def test_agent_retries_transient_candidate_http_error_when_rediscovered(temp_loaded):
+    first_source = "https://alpha.test/careers"
+    second_source = "https://beta.test/careers"
+    job_url = "https://jobs.test/buyer"
+    temp_loaded.config.crawler.retry_error_pages = True
+    temp_loaded.paths.seeds_path.write_text(
+        f"{first_source}\n{second_source}\n",
+        encoding="utf-8",
+    )
+    pages = {
+        first_source: snapshot(
+            first_source,
+            text="Alpha careers",
+            links=[LinkCandidate(text="Buyer", url=job_url)],
+        ),
+        second_source: snapshot(
+            second_source,
+            text="Beta careers",
+            links=[LinkCandidate(text="Buyer", url=job_url)],
+        ),
+    }
+    candidate_results = [
+        BrowserFetchError(
+            kind="http",
+            requested_url=job_url,
+            final_url=job_url,
+            status_code=503,
+        ),
+        snapshot(job_url, text="Buyer in Munich"),
+    ]
+
+    class RetryBrowser(FakeBrowser):
+        def fetch(self, url: str) -> PageSnapshot:
+            self.opened.append(url)
+            result = candidate_results.pop(0) if url == job_url else self.pages[url]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    llm = StaticLLM(
+        PageDecision(
+            link_classifications=[
+                LinkClassification(
+                    index=0,
+                    type="job_listing",
+                    fit_score=85,
+                    title="Buyer",
+                    company="Example",
+                    location="Munich",
+                )
+            ]
+        )
+    )
+    browser = RetryBrowser(pages)
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: browser,
+        llm_client=llm,
+    ).run() == 0
+
+    assert browser.opened.count(job_url) == 2
+    assert len(llm.calls) == 1
+    assert db.page_status(job_url) == "ok"
+    assert db.count_rows("jobs") == 1
+    db.close()
 
 
 def test_agent_sends_only_successfully_fetched_candidates_to_llm(temp_loaded):
@@ -282,8 +352,53 @@ def test_agent_sends_only_successfully_fetched_candidates_to_llm(temp_loaded):
     assert "Buyer in Munich" in llm_link["page_context"]
     assert db.conn.execute("select url from jobs").fetchone()["url"] == job_url
     assert db.page_status(source_url) == "ok"
-    assert db.page_status(failed_url) is None
+    assert db.page_status(failed_url) == "ok"
     assert browser.opened == [source_url, failed_url, job_url]
+    db.close()
+
+
+def test_agent_fetches_candidate_only_once_across_sources(temp_loaded):
+    first_source = "https://alpha.test/careers"
+    second_source = "https://beta.test/careers"
+    job_url = "https://jobs.test/buyer"
+    temp_loaded.paths.seeds_path.write_text(
+        f"{first_source}\n{second_source}\n",
+        encoding="utf-8",
+    )
+    pages = {
+        first_source: snapshot(
+            first_source,
+            text="Alpha careers",
+            links=[LinkCandidate(text="Buyer", url=job_url)],
+        ),
+        second_source: snapshot(
+            second_source,
+            text="Beta careers",
+            links=[LinkCandidate(text="Buyer", url=job_url)],
+        ),
+        job_url: snapshot(job_url, text="Buyer in Munich"),
+    }
+    llm = StaticLLM(
+        PageDecision(
+            link_classifications=[
+                LinkClassification(index=0, type="skip", reason="Not a target role")
+            ]
+        )
+    )
+    browser = FakeBrowser(pages)
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: browser,
+        llm_client=llm,
+    ).run() == 0
+
+    assert browser.opened.count(job_url) == 1
+    assert len(llm.calls) == 1
+    assert db.page_status(job_url) == "ok"
+    assert db.count_rows("backlog") == 0
     db.close()
 
 
@@ -436,9 +551,8 @@ def test_agent_exploration_flag_controls_explore_enqueue(temp_loaded, exploratio
 
     assert agent.run() == 0
     row = db.conn.execute("select status from backlog where url = ?", (explore_url,)).fetchone()
-    assert (row is not None) is exploration_enabled
-    if row is not None:
-        assert row["status"] == "done"
+    assert row is None
+    assert db.page_status(explore_url) == "ok"
     assert browser.opened.count(explore_url) == (2 if exploration_enabled else 1)
     db.close()
 
@@ -487,7 +601,11 @@ def test_agent_records_generic_midrun_llm_failure_without_saving(temp_loaded):
     assert agent.run() == 0
     assert db.count_rows("jobs") == 0
     assert db.page_status(source_url) == "error:RuntimeError"
+    assert db.page_status(job_url) == "ok"
     assert db.queued_count() == 0
+    assert db.conn.execute(
+        "select status from backlog where url = ?", (source_url,)
+    ).fetchone()["status"] == "error"
     assert browser.opened == [source_url, job_url]
     db.close()
 

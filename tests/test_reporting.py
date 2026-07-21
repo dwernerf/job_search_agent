@@ -64,19 +64,6 @@ def test_action_reporter_aggregates_pages_into_run_summary():
     assert "elapsed_seconds=12.5" in output
 
 
-def test_action_reporter_hides_debug_only_events_at_info_level():
-    logger, stream = make_stream_logger(logging.INFO)
-    reporter = ActionReporter(logger, clock=FakeClock())
-
-    reporter.action("skip_visited", url="https://example.test/jobs")
-    assert stream.getvalue() == ""
-
-    logger, stream = make_stream_logger(logging.DEBUG)
-    reporter = ActionReporter(logger, clock=FakeClock())
-    reporter.action("skip_visited", url="https://example.test/jobs")
-    assert "STEP skip_visited" in stream.getvalue()
-
-
 def test_action_reporter_prints_batch_complete_as_result():
     logger, stream = make_stream_logger()
     reporter = ActionReporter(logger, clock=FakeClock())

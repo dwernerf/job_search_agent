@@ -88,13 +88,12 @@ class JobAgent:
                 item_url = self.db.pop_backlog()
 
                 if item_url is None:
-                    self.reporter.action("backlog_empty_stop", pages_done=self._pages_done_count(), jobs_saved=jobs_saved_total)
+                    self.reporter.action(
+                        "backlog_empty_stop",
+                        pages_done=self.reporter.stats.pages,
+                        jobs_saved=jobs_saved_total,
+                    )
                     break
-
-                if self.db.was_visited(item_url):
-                    self.db.mark_backlog(item_url, "skipped_visited")
-                    self.reporter.action("skip_visited", url=item_url)
-                    continue
 
                 current_source_key = source_key(item_url)
                 snapshot = PageSnapshot(url=item_url, final_url=item_url, title="", text="")
@@ -119,6 +118,7 @@ class JobAgent:
                     # Single-stage: classify all candidate links with fetched page_context
                     enqueued = 0
                     batch_size = self.config.crawler.batch_size_for_llm
+                    claimed_candidate_urls: set[str] = set()
 
                     # Build batches
                     batches: list[list[LinkCandidate]] = []
@@ -139,11 +139,31 @@ class JobAgent:
                         fetched_links: list[LinkCandidate] = []
                         batch_fetch_failures_before = candidate_fetch_failures
                         for link in batch:
+                            if link.url not in claimed_candidate_urls:
+                                if not self.db.claim_candidate(link.url):
+                                    self.reporter.action(
+                                        "candidate_url_dropped",
+                                        url=link.url,
+                                        reason="already present in pages",
+                                    )
+                                    continue
+                                claimed_candidate_urls.add(link.url)
                             try:
                                 ctx_snapshot = browser.fetch(link.url)
+                                self.db.record_page(
+                                    url=link.url,
+                                    final_url=ctx_snapshot.final_url or link.url,
+                                    status="ok",
+                                )
                                 page_context = compact_text(ctx_snapshot.text, self.config)
                             except BrowserFetchError as exc:
                                 candidate_fetch_failures += 1
+                                if exc.kind == "http":
+                                    self.db.record_page(
+                                        url=link.url,
+                                        final_url=exc.final_url or link.url,
+                                        status=exc.page_status,
+                                    )
                                 self.reporter.action(
                                     "link_candidate_fetch_failed",
                                     status=exc.page_status,
@@ -261,7 +281,7 @@ class JobAgent:
                                     evidence=c.evidence,
                                 ))
                             elif c.type == "explore" and self.config.exploration.enabled:
-                                if c.url and self.db.enqueue(c.url):
+                                if c.url and self.db.enqueue(c.url, allow_visited=True):
                                     enqueued += 1
 
                             # Info-level log: url + type + fit
@@ -279,12 +299,6 @@ class JobAgent:
                         page_saved = self.db.save_jobs(cleaned, current_source_key)
                         saved += page_saved
                         jobs_saved_total += page_saved
-                        for job in cleaned:
-                            self.db.record_page(
-                                url=job.original_url,
-                                final_url=job.url,
-                                status="ok",
-                            )
 
                         self.reporter.action(
                             "batch_complete",
@@ -306,8 +320,7 @@ class JobAgent:
                                                   c.index, c.url, c.type, c.fit_score, (c.reason or ""), page_ctx)
 
                     page_status = "ok"
-                    self.db.record_page(url=item_url, final_url=final_url, status=page_status)
-                    self.db.mark_backlog(item_url, "done")
+                    self.db.complete_backlog(url=item_url, final_url=final_url)
                     self.reporter.record_page(
                         status=page_status,
                         jobs_saved=saved,
@@ -357,10 +370,6 @@ class JobAgent:
         )
         self.reporter.run_summary(queued=self.db.queued_count())
         return 0
-
-    def _pages_done_count(self) -> int:
-        """Count completed (non-queued) backlog items."""
-        return self.db.count_rows("backlog") - self.db.queued_count()
 
     def _llm_health_check(self) -> tuple[bool, str]:
         health = getattr(self.llm_client, "health_check", None)

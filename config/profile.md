@@ -4,7 +4,7 @@ Edit this file to change the target roles and profile context used by the LLM. R
 
 ## Search area
 
-I am looking for jobs in the Munich area, Germany. Good locations include Munich/München and towns within roughly 30 km of Munich. Hybrid roles with regular office presence near Munich are acceptable. Remote roles are acceptable only when they can clearly be performed from Germany.
+I am looking for jobs in the Munich area, Germany. Good locations include Munich/München and towns within roughly 15 km of Munich. Hybrid roles with regular office presence near Munich are acceptable. Remote roles are acceptable only when they can clearly be performed from Germany.
 
 The target market is Germany. German-language, English-language, and mixed German-English postings are all acceptable. German employers may publish German navigation pages but English job titles.
 
@@ -107,6 +107,7 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Field Sales / Außendienst Vertrieb
 - Inside Sales
 - Vice President
+- Head of
 - Team Lead
 - Department Lead
 - Abteilungsleiter

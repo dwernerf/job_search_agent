@@ -125,6 +125,7 @@ def test_malformed_v2_constraints_are_rejected(tmp_path: Path, temp_loaded) -> N
 def test_backlog_rejects_duplicates_and_retries_error_pages(
     tmp_path: Path, temp_loaded
 ) -> None:
+    temp_loaded.config.crawler.retry_error_pages = True
     db = Database(tmp_path / "backlog.sqlite", temp_loaded.config)
 
     assert db.enqueue("https://queue.test/new") is True
@@ -132,7 +133,11 @@ def test_backlog_rejects_duplicates_and_retries_error_pages(
     assert db.queued_count() == 1
     assert db.pop_backlog() == "https://queue.test/new"
     assert db.pop_backlog() is None
-    db.mark_backlog("https://queue.test/new", "done")
+    db.complete_backlog("https://queue.test/new", "https://queue.test/final")
+    assert db.conn.execute(
+        "select 1 from backlog where url = ?", ("https://queue.test/new",)
+    ).fetchone() is None
+    assert db.page_status("https://queue.test/final") == "ok"
 
     db.record_page("https://pages.test/error", "https://pages.test/error", "error:Timeout")
     assert db.can_revisit("https://pages.test/error") is True
@@ -141,7 +146,38 @@ def test_backlog_rejects_duplicates_and_retries_error_pages(
     db.record_page("https://pages.test/ok", "https://pages.test/final", "ok")
     assert db.was_visited("https://pages.test/final") is True
     assert db.enqueue("https://pages.test/final") is False
-    assert db.reset_backlog() == 2
+    assert db.reset_backlog() == 1
+    db.close()
+
+
+def test_candidate_claim_retries_only_transient_http_errors(
+    tmp_path: Path, temp_loaded
+) -> None:
+    temp_loaded.config.crawler.retry_error_pages = False
+    db = Database(tmp_path / "candidates.sqlite", temp_loaded.config)
+    url = "https://pages.test/candidate"
+    final_url = "https://pages.test/final"
+
+    assert db.claim_candidate(url) is True
+    assert db.page_status(url) == "ok"
+    assert db.claim_candidate(url) is False
+
+    db.record_page(url, final_url, "error:http_503")
+    assert db.claim_candidate(final_url) is False
+
+    temp_loaded.config.crawler.retry_error_pages = True
+    assert db.claim_candidate(final_url) is True
+    assert db.page_status(final_url) == "ok"
+
+    for status_code in (400, 403, 404, 499):
+        db.record_page(url, final_url, f"error:http_{status_code}")
+        assert db.claim_candidate(final_url) is False
+
+    for status_code in (408, 425, 429, 500, 503, 599):
+        db.record_page(url, final_url, f"error:http_{status_code}")
+        assert db.claim_candidate(final_url) is True
+    assert db.enqueue(final_url) is False
+    assert db.enqueue(final_url, allow_visited=True) is True
     db.close()
 
 
@@ -150,15 +186,23 @@ def test_reopening_database_recovers_interrupted_backlog(
 ) -> None:
     path = tmp_path / "recovery.sqlite"
     temp_loaded.config.run.backlog_order = "fifo"
+    temp_loaded.config.crawler.retry_error_pages = True
     db = Database(path, temp_loaded.config)
     assert db.enqueue("https://queue.test/interrupted") is True
     assert db.pop_backlog() == "https://queue.test/interrupted"
     assert db.enqueue("https://queue.test/error") is True
     db.mark_backlog("https://queue.test/error", "error")
+    assert db.enqueue("https://queue.test/done") is True
+    db.mark_backlog("https://queue.test/done", "done")
+    assert db.enqueue("https://queue.test/skipped") is True
+    db.mark_backlog("https://queue.test/skipped", "skipped_visited")
     db.close()
 
     reopened = Database(path, temp_loaded.config)
     assert reopened.queued_count() == 2
+    assert reopened.conn.execute(
+        "select count(*) from backlog where status in ('done', 'skipped_visited')"
+    ).fetchone()[0] == 0
     assert reopened.pop_backlog() == "https://queue.test/interrupted"
     assert reopened.pop_backlog() == "https://queue.test/error"
     reopened.close()

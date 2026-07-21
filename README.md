@@ -45,11 +45,11 @@ The agent runs one queue-driven loop:
 1. **Check the LLM** - when enabled, request the configured `/models` endpoint before opening a browser.
 2. **Seed the backlog** - enqueue URLs from `config/seeds.txt`, generated bootstrap searches, or both.
 3. **Open a backlog page** - Playwright captures its final URL, title, body text, links, and any `JobPosting` JSON-LD rendered as text.
-4. **Filter and fetch outbound destinations** - URLs are normalized, checked against URL-only crawl rules, stripped of tracking parameters, and deduplicated before Playwright opens every surviving destination and compacts its text into `page_context`. Failed destinations are logged and excluded before classification.
+4. **Claim and fetch outbound destinations** - URLs are normalized, checked against URL-only crawl rules, stripped of tracking parameters, and deduplicated. A URL already present in `pages` is dropped; a new URL is immediately recorded there with `status=ok` before Playwright fetches and compacts it into `page_context`. HTTP failures update that marker and are excluded before classification.
 5. **Classify the links** - the LLM receives the overview page plus each link's text, URL, and destination context. It returns `link_classifications` with type `job_listing`, `explore`, or `skip`.
 6. **Route classifications** - a `job_listing` at or above `scoring.min_score_to_export` becomes a job candidate. An `explore` URL enters the backlog when exploration is enabled. A `skip` result is ignored.
 7. **Filter and save** - Python applies the company blacklist, removes duplicate job URLs from the batch, and upserts jobs by URL. CSV is rewritten from SQLite after each non-empty save.
-8. **Continue** - the source backlog page is marked complete and the loop runs until no queued URL remains.
+8. **Continue** - the successfully processed source is recorded in `pages`, its backlog row is deleted, and the loop runs until no queued URL remains.
 
 Fetching an outbound destination for classification does not automatically queue it. Only links classified as `explore` enter the URL-only backlog.
 
@@ -160,13 +160,13 @@ SQLite schema version 2 contains exactly three tables:
 | `pages` | `url`, `final_url`, `status` |
 | `backlog` | `url`, `status`, `queued_at` |
 
-`pages` supplies visited-URL state; failed pages can be retried when `crawler.retry_error_pages` is enabled. The backlog stores no depth or discovery metadata. Enabling `run.reset_backlog_on_start` clears only backlog rows, while saved jobs and visited pages remain.
+`pages` is the permanent attempted-URL set. Candidate deduplication normally checks only whether a requested or final URL exists there. When `crawler.retry_error_pages` is enabled, candidates with transient HTTP statuses (408, 425, 429, or 5xx) are the exception and may be claimed again when rediscovered. Backlog source errors can also be retried under that setting. The backlog stores no depth or discovery metadata and retains only queued, active, or errored work. Successful rows are deleted. Enabling `run.reset_backlog_on_start` clears only backlog rows, while saved jobs and attempted-page rows remain.
 
 The same URL policy is used for seeds, generated searches, and page links. It accepts configured HTTP schemes; requires a host; rejects configured domains, file extensions, login/account URLs, and initiative/talent-pool/general-application URLs; removes configured tracking parameters and fragments; and normalizes paths. Page links resolving to the source page or to an already-seen canonical URL are removed.
 
-Filtering is URL-only. Link text is not inspected, submission endpoints such as `/apply/submit` are not denied, and there is no per-page candidate limit or provider-specific rule. Every unique URL that passes the policy is fetched before LLM classification.
+Filtering is URL-only. Link text is not inspected, submission endpoints such as `/apply/submit` are not denied, and there is no per-page candidate limit or provider-specific rule. Every newly claimed URL that passes the policy is fetched before LLM classification.
 
-Legacy database schemas are not migrated. Delete an old database before starting this version. Interrupted `active` backlog rows in a valid v2 database are returned to `queued` when the database is reopened.
+Legacy database schemas are not migrated. Delete an old database before starting this version. Interrupted `active` backlog rows in a valid v2 database are returned to `queued` when the database is reopened. Error rows are also requeued when `crawler.retry_error_pages` is enabled; old `done` and `skipped_visited` rows are removed.
 
 For a saved job, `source_key` contains the normalized domain and first path segment of the backlog page being processed. An upsert preserves `first_seen_at`, updates the other job fields, and refreshes `last_seen_at`.
 
@@ -200,7 +200,7 @@ CSV uses these fields, in this order:
 
 The export is synchronized from all SQLite job rows on database startup and after every `save_jobs()` call that writes at least one job. Rows are ordered by descending fit score and then most recent `last_seen_at`.
 
-Failed browser navigations retain the requested/final URL, failure category, and HTTP status when available. Top-level failures persist concise statuses such as `error:http_429` or `error:navigation_timeout`. A failed candidate is logged, excluded from the LLM request, and not persisted as a visited page. If the source itself loaded and was processed, it is still marked complete.
+Failed browser navigations retain the requested/final URL, failure category, and HTTP status when available. Top-level failures persist concise statuses such as `error:http_429` or `error:navigation_timeout`. A candidate HTTP failure updates its `pages` marker and is excluded from the LLM request. Transient candidate HTTP failures can be fetched again when rediscovered and retries are enabled; other candidate failures remain terminal. Source failures retain an errored backlog row; successful sources delete their backlog row.
 
 Inspect top jobs:
 

@@ -153,6 +153,9 @@ class Database:
         }
 
     def _recover_backlog(self) -> None:
+        self.conn.execute(
+            "delete from backlog where status in ('done', 'skipped_visited')"
+        )
         statuses = ["active"]
         if self.config.crawler.retry_error_pages:
             statuses.append("error")
@@ -186,8 +189,53 @@ class Database:
     def was_visited(self, url: str) -> bool:
         return self.page_status(url) is not None and not self.can_revisit(url)
 
-    def enqueue(self, url: str) -> bool:
-        if self.was_visited(url):
+    def claim_candidate(self, url: str) -> bool:
+        try:
+            self.conn.execute("begin immediate")
+            row = self.conn.execute(
+                """
+                select url, status from pages
+                where url = ? or final_url = ?
+                order by case when url = ? then 0 else 1 end
+                limit 1
+                """,
+                (url, url, url),
+            ).fetchone()
+            if row is not None:
+                if not (
+                    self.config.crawler.retry_error_pages
+                    and self._is_retryable_http_error(str(row["status"]))
+                ):
+                    self.conn.commit()
+                    return False
+                self.conn.execute(
+                    "update pages set status = 'ok' where url = ?",
+                    (str(row["url"]),),
+                )
+            else:
+                self.conn.execute(
+                    "insert into pages(url, final_url, status) values (?, ?, 'ok')",
+                    (url, url),
+                )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    @staticmethod
+    def _is_retryable_http_error(status: str) -> bool:
+        prefix = "error:http_"
+        if not status.startswith(prefix):
+            return False
+        try:
+            status_code = int(status.removeprefix(prefix))
+        except ValueError:
+            return False
+        return status_code in {408, 425, 429} or 500 <= status_code <= 599
+
+    def enqueue(self, url: str, *, allow_visited: bool = False) -> bool:
+        if not allow_visited and self.was_visited(url):
             return False
         timestamp = now_iso()
         cursor = self.conn.execute(
@@ -217,6 +265,27 @@ class Database:
         self.conn.execute("update backlog set status = ? where url = ?", (status, url))
         self.conn.commit()
 
+    def complete_backlog(self, url: str, final_url: str) -> None:
+        try:
+            self.conn.execute("begin immediate")
+            cursor = self.conn.execute(
+                """
+                update pages set final_url = ?, status = 'ok'
+                where url = ? or final_url = ?
+                """,
+                (final_url, url, url),
+            )
+            if cursor.rowcount == 0:
+                self.conn.execute(
+                    "insert into pages(url, final_url, status) values (?, ?, 'ok')",
+                    (url, final_url),
+                )
+            self.conn.execute("delete from backlog where url = ?", (url,))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def queued_count(self) -> int:
         row = self.conn.execute("select count(*) from backlog where status = 'queued'").fetchone()
         return int(row[0])
@@ -227,13 +296,18 @@ class Database:
         return cursor.rowcount
 
     def record_page(self, url: str, final_url: str, status: str) -> None:
-        self.conn.execute(
+        cursor = self.conn.execute(
             """
-            insert into pages(url, final_url, status) values (?, ?, ?)
-            on conflict(url) do update set final_url = excluded.final_url, status = excluded.status
+            update pages set final_url = ?, status = ?
+            where url = ? or final_url = ?
             """,
-            (url, final_url, status),
+            (final_url, status, url, url),
         )
+        if cursor.rowcount == 0:
+            self.conn.execute(
+                "insert into pages(url, final_url, status) values (?, ?, ?)",
+                (url, final_url, status),
+            )
         self.conn.commit()
 
     def save_jobs(self, jobs: Iterable[JobMatch], source_key: str) -> int:

@@ -69,7 +69,7 @@ run:
 
 crawler:
   # Retry pages that failed in earlier runs.
-  retry_error_pages: true
+  retry_error_pages: false
 
   # Number of links to send to the LLM per batch. Each link includes its own
   # fetched page_context. If the batch exceeds the context window, the last
