@@ -10,7 +10,7 @@ from .config import JobAgentConfig
 from .models import JobMatch
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _V2_COLUMNS = {
     "jobs": (
@@ -29,6 +29,13 @@ _V2_COLUMNS = {
     "pages": ("url", "final_url", "status"),
     "backlog": ("url", "status", "queued_at"),
 }
+
+_V3_COLUMNS = {
+    **_V2_COLUMNS,
+    "backlog": ("url", "status", "queued_at", "rating", "queue_position"),
+}
+
+_INTEGER_COLUMNS = {"fit_score", "rating", "queue_position"}
 
 
 def now_iso() -> str:
@@ -68,27 +75,31 @@ class Database:
             )
         tables = self._table_names()
         if version == SCHEMA_VERSION:
+            self._validate_v3_schema()
+            return
+        if version == 2:
             self._validate_v2_schema()
+            self._migrate_v2_to_v3()
             return
         if tables:
             raise RuntimeError(
                 "legacy database schemas are not supported; delete the database "
-                "and restart to create schema v2"
+                "and restart to create schema v3"
             )
-        self._create_fresh_v2()
+        self._create_fresh_v3()
 
-    def _create_fresh_v2(self) -> None:
+    def _create_fresh_v3(self) -> None:
         try:
             self.conn.execute("begin immediate")
-            self._create_v2_tables()
-            self._validate_v2_schema()
+            self._create_v3_tables()
+            self._validate_v3_schema()
             self.conn.execute(f"pragma user_version = {SCHEMA_VERSION}")
             self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
 
-    def _create_v2_tables(self) -> None:
+    def _create_v3_tables(self) -> None:
         self.conn.execute(
             """
             create table jobs (
@@ -120,29 +131,80 @@ class Database:
             create table backlog (
                 url text not null primary key,
                 status text not null,
-                queued_at text not null
+                queued_at text not null,
+                rating integer not null,
+                queue_position integer not null
             )
             """
         )
 
     def _validate_v2_schema(self) -> None:
+        self._validate_schema(_V2_COLUMNS, 2)
+
+    def _validate_v3_schema(self) -> None:
+        self._validate_schema(_V3_COLUMNS, 3)
+
+    def _validate_schema(
+        self,
+        expected_schema: dict[str, tuple[str, ...]],
+        version: int,
+    ) -> None:
         tables = self._table_names()
-        if tables != set(_V2_COLUMNS):
-            raise RuntimeError(f"invalid v2 database tables: {sorted(tables)}")
-        for table, expected_columns in _V2_COLUMNS.items():
+        if tables != set(expected_schema):
+            raise RuntimeError(f"invalid v{version} database tables: {sorted(tables)}")
+        for table, expected_columns in expected_schema.items():
             info = self.conn.execute(f"pragma table_info({table})").fetchall()
             columns = tuple(str(row["name"]) for row in info)
             if columns != expected_columns:
-                raise RuntimeError(f"invalid v2 schema for table {table}: {list(columns)}")
+                raise RuntimeError(
+                    f"invalid v{version} schema for table {table}: {list(columns)}"
+                )
             for row in info:
                 name = str(row["name"])
-                if str(row["type"]).upper() != ("INTEGER" if name == "fit_score" else "TEXT"):
-                    raise RuntimeError(f"invalid v2 column type for {table}.{name}")
+                expected_type = "INTEGER" if name in _INTEGER_COLUMNS else "TEXT"
+                if str(row["type"]).upper() != expected_type:
+                    raise RuntimeError(
+                        f"invalid v{version} column type for {table}.{name}"
+                    )
                 if name == "url":
                     if int(row["pk"]) != 1 or int(row["notnull"]) != 1:
-                        raise RuntimeError(f"invalid v2 primary key for {table}.url")
+                        raise RuntimeError(
+                            f"invalid v{version} primary key for {table}.url"
+                        )
                 elif int(row["pk"]) != 0 or int(row["notnull"]) != 1:
-                    raise RuntimeError(f"invalid v2 nullability for {table}.{name}")
+                    raise RuntimeError(
+                        f"invalid v{version} nullability for {table}.{name}"
+                    )
+
+    def _migrate_v2_to_v3(self) -> None:
+        try:
+            self.conn.execute("begin immediate")
+            self.conn.execute(
+                "alter table backlog add column rating integer not null default 80"
+            )
+            self.conn.execute(
+                "alter table backlog add column queue_position integer not null default 0"
+            )
+            self.conn.execute(
+                """
+                with ordered as (
+                    select rowid as backlog_rowid,
+                           row_number() over (order by queued_at asc, rowid asc) as position
+                    from backlog
+                )
+                update backlog
+                set queue_position = (
+                    select position from ordered
+                    where ordered.backlog_rowid = backlog.rowid
+                )
+                """
+            )
+            self._validate_v3_schema()
+            self.conn.execute(f"pragma user_version = {SCHEMA_VERSION}")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def _table_names(self) -> set[str]:
         return {
@@ -177,17 +239,6 @@ class Database:
             (url, url, url),
         ).fetchone()
         return str(row["status"]) if row else None
-
-    def can_revisit(self, url: str) -> bool:
-        status = self.page_status(url)
-        return bool(
-            status
-            and (status == "error" or status.startswith("error:"))
-            and self.config.crawler.retry_error_pages
-        )
-
-    def was_visited(self, url: str) -> bool:
-        return self.page_status(url) is not None and not self.can_revisit(url)
 
     def claim_candidate(self, url: str) -> bool:
         try:
@@ -234,23 +285,49 @@ class Database:
             return False
         return status_code in {408, 425, 429} or 500 <= status_code <= 599
 
-    def enqueue(self, url: str, *, allow_visited: bool = False) -> bool:
-        if not allow_visited and self.was_visited(url):
-            return False
+    def enqueue(self, url: str, *, rating: int) -> bool:
+        if (
+            isinstance(rating, bool)
+            or not isinstance(rating, int)
+            or not 0 <= rating <= 100
+        ):
+            raise ValueError("backlog rating must be an integer from 0 to 100")
         timestamp = now_iso()
+        row = self.conn.execute(
+            "select coalesce(max(queue_position), 0) + 1 from backlog"
+        ).fetchone()
+        queue_position = int(row[0])
         cursor = self.conn.execute(
             """
-            insert into backlog(url, status, queued_at) values (?, 'queued', ?)
-            on conflict(url) do update set status = 'queued', queued_at = excluded.queued_at
-            where backlog.status != 'queued'
+            insert into backlog(url, status, queued_at, rating, queue_position)
+            values (?, 'queued', ?, ?, ?)
+            on conflict(url) do update set
+                status = 'queued',
+                queued_at = case
+                    when backlog.status = 'queued' then backlog.queued_at
+                    else excluded.queued_at
+                end,
+                rating = max(backlog.rating, excluded.rating),
+                queue_position = case
+                    when backlog.status = 'queued' then backlog.queue_position
+                    else excluded.queue_position
+                end
+            where backlog.status != 'queued' or excluded.rating > backlog.rating
             """,
-            (url, timestamp),
+            (url, timestamp, rating, queue_position),
         )
         self.conn.commit()
         return cursor.rowcount > 0
 
     def pop_backlog(self) -> str | None:
-        order_clause = "queued_at asc" if self.config.run.backlog_order == "fifo" else "random()"
+        if self.config.run.backlog_order == "fifo":
+            order_clause = "queue_position asc"
+        elif self.config.run.backlog_order == "shuffle":
+            order_clause = "random()"
+        elif self.config.run.backlog_order == "rating":
+            order_clause = "rating desc, queue_position asc"
+        else:
+            raise ValueError(f"unknown backlog order: {self.config.run.backlog_order}")
         row = self.conn.execute(
             f"select url from backlog where status = 'queued' order by {order_clause} limit 1"
         ).fetchone()
@@ -395,7 +472,7 @@ class Database:
             temporary.unlink(missing_ok=True)
 
     def count_rows(self, table: str) -> int:
-        if table not in _V2_COLUMNS:
+        if table not in _V3_COLUMNS:
             raise ValueError(f"unknown table: {table}")
         row = self.conn.execute(f"select count(*) from {table}").fetchone()
         return int(row[0])

@@ -29,25 +29,25 @@ page_analysis_user: |-
   $links_with_context
 
   Classification Guidance:
-  - Classify each link independently using only that link's page_title and page_context. Do not use the overview text or another link's context to fill in missing job details.
+  - Classify each link independently using only that link's text, original_url, url, page_title, and page_context. Do not use the overview text or another link's context to fill in missing job details.
 
   Link classification types:
   - job_listing: The destination page is dedicated to one specific job and contains its actual title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context. Include fit_score, title, company, location, evidence, and reason.
-  - explore: The destination is useful for future browsing because it contains links to potentially relevant job postings, including search results, job overviews, and company careers pages. There must be a high chance that they are located in the target search area and be relevant for the person we are looking for, otherwise skip. fit_score = 0.
+  - explore: The destination is useful for future browsing because it contains links to potentially relevant job postings, including search results, job overviews, and company careers pages. Include fit_score and reason. For this type, fit_score is the 0-100 likelihood that browsing through this URL will reveal at least one suitable job for the candidate in the target area. Use skip instead when the URL is not genuinely useful for that search.
   - skip: The destination is not useful (e.g., footer, cookie policy, login, legal, generic page, different search area, not relevant for searches for the target role). Also use "skip" if page_context is empty. fit_score = 0.
 
   Return JSON only with this exact shape:
   {
     "link_classifications": [
       {"index": 0, "type": "job_listing", "fit_score": 85, "title": "Example Target Role", "company": "Example Corp", "location": "Target City", "evidence": "Concrete role evidence", "reason": "Matches target criteria"},
-      {"index": 1, "type": "explore", "fit_score": 0, "reason": "Example Reason"},
+      {"index": 1, "type": "explore", "fit_score": 82, "reason": "Target-area careers page with relevant roles"},
       {"index": 2, "type": "skip", "fit_score": 0, "reason": "Example Reason"}
     ]
   }
 
   IMPORTANT: Return a link_classifications entry for EVERY link provided. Never return full URLs in this field. The index corresponds to the position in the current batch above. If all links are skip, return an array of skip entries.
 
-  Fit scoring policy (only for job_listing entries):
+  Job fit scoring policy (only for job_listing entries):
   - Use the candidate profile as the source of truth for target roles, exclusions, expertise, industry preferences, and seniority. Be critical during this evaluation.
   - Score the concrete job, not the employer brand, search snippet, or general industry.
   - 90-100: exact target-role fit, clear fit for given background and seniority information, directly at target location, strong expertise and relevant industries fit, and valid target-area or explicitly accepted remote location.
@@ -59,3 +59,10 @@ page_analysis_user: |-
   - A role without a clear target-role signal from the profile must score below 45.
   - A non-remote job outside the target-area policy in the candidate profile must score below 45.
   - Broad-only locations are insufficient for non-remote jobs unless the posting explicitly supports remote work in the accepted country.
+
+  Explore rating policy (only for explore entries):
+  - 90-100: a focused target-area result or careers page with strong evidence of relevant open roles.
+  - 70-89: a relevant job overview or careers page likely to lead to suitable target-area roles.
+  - 40-69: potentially useful, but role relevance, active openings, or target-area coverage is uncertain.
+  - 1-39: weak chance of finding a suitable target-area role; normally classify as skip instead.
+  - 0: no useful chance; classify as skip.

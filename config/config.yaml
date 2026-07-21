@@ -56,12 +56,11 @@ run:
   # Clear the backlog at each start. This prevents stale backlog items from
   # an older mode/profile run from dragging the agent into irrelevant pages.
   # It does not delete jobs or visited-page state.
-  reset_backlog_on_start: false
+  reset_backlog_on_start: true
 
-  # Backlog queue ordering: "fifo" (insertion order) or "shuffle" (random).
-  # Shuffle prevents the agent from always following the same traversal path
-  # when multiple URLs share the same insertion time (e.g. seed URLs).
-  backlog_order: shuffle
+  # Backlog queue ordering: "fifo" (insertion order), "shuffle" (random), or
+  # "rating" (highest rating first, with FIFO as the tie-breaker).
+  backlog_order: rating
 
   # Interval between actual Playwright navigations. Set both to zero to disable.
   min_delay_seconds: 0.2
@@ -97,7 +96,7 @@ seeding:
 
   bootstrapped_search:
     # Maximum distinct role/suffix/company queries sampled per startup.
-    max_samples: 50
+    max_samples: 40
 
     # Search endpoints for bootstrapped queries.
     # Supported placeholder: {query} URL-encoded text.

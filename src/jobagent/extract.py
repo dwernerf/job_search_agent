@@ -92,7 +92,7 @@ def page_decision_from_dict(data: dict[str, Any]) -> PageDecision:
             continue
         if not 0 <= fit_score <= 100:
             continue
-        if classification_type != "job_listing":
+        if classification_type == "skip":
             fit_score = 0
         classification = LinkClassification(
             index=index,

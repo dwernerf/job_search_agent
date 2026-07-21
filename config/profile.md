@@ -108,6 +108,8 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Inside Sales
 - Vice President
 - Head of
+- Chief
+- Global Head
 - Team Lead
 - Department Lead
 - Abteilungsleiter
@@ -147,3 +149,4 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - talent pool
 - talent community
 - general application
+- marternity cover

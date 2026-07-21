@@ -281,7 +281,7 @@ class JobAgent:
                                     evidence=c.evidence,
                                 ))
                             elif c.type == "explore" and self.config.exploration.enabled:
-                                if c.url and self.db.enqueue(c.url, allow_visited=True):
+                                if c.url and self.db.enqueue(c.url, rating=c.fit_score):
                                     enqueued += 1
 
                             # Info-level log: url + type + fit

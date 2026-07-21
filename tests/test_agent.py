@@ -44,6 +44,16 @@ class StaticLLM:
         return self.decision
 
 
+class RecordingDatabase(Database):
+    def __init__(self, *args, **kwargs) -> None:
+        self.enqueued_ratings: list[tuple[str, int]] = []
+        super().__init__(*args, **kwargs)
+
+    def enqueue(self, url: str, *, rating: int) -> bool:
+        self.enqueued_ratings.append((url, rating))
+        return super().enqueue(url, rating=rating)
+
+
 def snapshot(url: str, *, text: str, links: list[LinkCandidate] | None = None) -> PageSnapshot:
     return PageSnapshot(
         url=url,
@@ -541,12 +551,17 @@ def test_agent_exploration_flag_controls_explore_enqueue(temp_loaded, exploratio
     llm = StaticLLM(
         PageDecision(
             link_classifications=[
-                LinkClassification(index=0, type="explore", reason="Relevant job index")
+                LinkClassification(
+                    index=0,
+                    type="explore",
+                    fit_score=73,
+                    reason="Relevant job index",
+                )
             ],
         )
     )
     browser = FakeBrowser(pages)
-    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+    db = RecordingDatabase(temp_loaded.paths.database_path, temp_loaded.config)
     agent = JobAgent(temp_loaded, db=db, browser_factory=lambda: browser, llm_client=llm)
 
     assert agent.run() == 0
@@ -554,6 +569,39 @@ def test_agent_exploration_flag_controls_explore_enqueue(temp_loaded, exploratio
     assert row is None
     assert db.page_status(explore_url) == "ok"
     assert browser.opened.count(explore_url) == (2 if exploration_enabled else 1)
+    assert db.enqueued_ratings == (
+        [(source_url, 80), (explore_url, 73)]
+        if exploration_enabled
+        else [(source_url, 80)]
+    )
+    db.close()
+
+
+def test_agent_requeues_seed_already_recorded_in_pages(temp_loaded):
+    source_url = "https://alpha.test/careers"
+    temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
+    pages = {source_url: snapshot(source_url, text="Careers")}
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    first_browser = FakeBrowser(pages)
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: first_browser,
+        llm_client=StaticLLM(PageDecision()),
+    ).run() == 0
+    assert db.page_status(source_url) == "ok"
+
+    second_browser = FakeBrowser(pages)
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: second_browser,
+        llm_client=StaticLLM(PageDecision()),
+    ).run() == 0
+
+    assert first_browser.opened == [source_url]
+    assert second_browser.opened == [source_url]
     db.close()
 
 

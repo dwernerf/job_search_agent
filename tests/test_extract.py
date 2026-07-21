@@ -23,15 +23,18 @@ def test_page_decision_parses_link_classifications():
                     "evidence": "Strategic sourcing",
                     "reason": "Strong fit",
                 },
-                {"index": 1, "type": "explore", "fit_score": 0},
+                {"index": 1, "type": "explore", "fit_score": 73},
+                {"index": 2, "type": "skip", "fit_score": 100},
             ],
         }
     )
 
-    assert len(decision.link_classifications) == 2
+    assert len(decision.link_classifications) == 3
     assert decision.link_classifications[0].title == "Buyer"
     assert decision.link_classifications[0].url == ""
     assert decision.link_classifications[1].type == "explore"
+    assert decision.link_classifications[1].fit_score == 73
+    assert decision.link_classifications[2].fit_score == 0
 
 
 def test_page_decision_rejects_malformed_classifications():
@@ -49,7 +52,7 @@ def test_page_decision_rejects_malformed_classifications():
     )
 
     assert [(item.index, item.type, item.fit_score) for item in decision.link_classifications] == [
-        (3, "explore", 0)
+        (3, "explore", 99)
     ]
 
 

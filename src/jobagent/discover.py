@@ -9,6 +9,9 @@ from .db import Database
 from .urltools import filter_url, render_query_url
 
 
+SEED_RATING = 89
+
+
 def read_seed_urls(path: Path, config: JobAgentConfig) -> list[str]:
     if not path.exists():
         return []
@@ -83,13 +86,13 @@ def seed_backlog(config: JobAgentConfig, db: Database, seed_path: Path) -> int:
     if mode in ("seeds", "both"):
         seeds = read_seed_urls(seed_path, config)
         for url in seeds:
-            if db.enqueue(url):
+            if db.enqueue(url, rating=SEED_RATING):
                 count += 1
 
     if mode in ("bootstrap", "both"):
         for query in bootstrap_queries(config):
             for url in search_urls_for_query(query, config):
-                if db.enqueue(url):
+                if db.enqueue(url, rating=SEED_RATING):
                     count += 1
 
     return count

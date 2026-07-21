@@ -21,6 +21,9 @@ def test_seed_backlog_reads_seed_file(temp_loaded):
     count = seed_backlog(temp_loaded.config, db, temp_loaded.paths.seeds_path)
 
     assert count == 1
+    assert db.conn.execute(
+        "select rating from backlog where url = ?", ("https://acme.test/careers",)
+    ).fetchone()["rating"] == 80
     assert db.pop_backlog() == "https://acme.test/careers"
     db.close()
 
@@ -39,6 +42,9 @@ def test_bootstrap_seeding_is_independent_of_runtime_exploration(temp_loaded, mo
     assert count == len(urls)
     assert "https://acme.test/careers" in urls
     assert any(url.startswith("https://search.brave.com/search?q=") for url in urls)
+    assert {
+        row["rating"] for row in db.conn.execute("select rating from backlog")
+    } == {80}
     db.close()
 
 

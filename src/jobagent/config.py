@@ -122,11 +122,10 @@ class BrowserConfig(StrictModel):
 
 class RunConfig(StrictModel):
     # Ordering of the backlog queue when popping the next item to visit.
-    # "fifo"  – first-in-first-out (insertion order, oldest first).
+    # "fifo" – first-in-first-out (insertion order, oldest first).
     # "shuffle" – random order via SQLite's ORDER BY random().
-    # Shuffle prevents the agent from always following the same traversal path
-    # when multiple URLs share the same insertion time (e.g. seeds).
-    backlog_order: Literal["fifo", "shuffle"] = "fifo"
+    # "rating" – highest rating first, with FIFO as the tie-breaker.
+    backlog_order: Literal["fifo", "shuffle", "rating"] = "fifo"
     reset_backlog_on_start: bool = True
     min_delay_seconds: float = Field(default=0.2, ge=0)
     max_delay_seconds: float = Field(default=0.8, ge=0)

@@ -25,7 +25,7 @@ EXPECTED_COLUMNS = {
         "original_url",
     ],
     "pages": ["url", "final_url", "status"],
-    "backlog": ["url", "status", "queued_at"],
+    "backlog": ["url", "status", "queued_at", "rating", "queue_position"],
 }
 
 
@@ -51,11 +51,11 @@ def job(url: str = "https://jobs.test/1", *, title: str = "Buyer") -> JobMatch:
     )
 
 
-def test_fresh_database_creates_strict_v2_schema(tmp_path: Path, temp_loaded) -> None:
+def test_fresh_database_creates_strict_v3_schema(tmp_path: Path, temp_loaded) -> None:
     db = Database(tmp_path / "fresh.sqlite", temp_loaded.config)
 
-    assert db.conn.execute("pragma user_version").fetchone()[0] == 2
-    assert SCHEMA_VERSION == 2
+    assert db.conn.execute("pragma user_version").fetchone()[0] == 3
+    assert SCHEMA_VERSION == 3
     assert table_names(db.conn) == set(EXPECTED_COLUMNS)
     for table, expected_names in EXPECTED_COLUMNS.items():
         info = db.conn.execute(f"pragma table_info({table})").fetchall()
@@ -94,6 +94,80 @@ def test_future_schema_is_rejected(tmp_path: Path, temp_loaded) -> None:
         Database(path, temp_loaded.config)
 
 
+def test_valid_v2_database_is_migrated_with_rated_fifo_backlog(
+    tmp_path: Path, temp_loaded
+) -> None:
+    path = tmp_path / "v2.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        create table jobs (
+            url text not null primary key, title text not null, company text not null,
+            location text not null, fit_score integer not null, reason text not null,
+            evidence text not null, source_key text not null,
+            first_seen_at text not null, last_seen_at text not null,
+            original_url text not null
+        );
+        create table pages (
+            url text not null primary key, final_url text not null, status text not null
+        );
+        create table backlog (
+            url text not null primary key, status text not null, queued_at text not null
+        );
+        pragma user_version = 2;
+        """
+    )
+    conn.execute(
+        "insert into pages(url, final_url, status) values (?, ?, 'ok')",
+        ("https://pages.test/old", "https://pages.test/final"),
+    )
+    conn.execute(
+        """
+        insert into jobs(
+            url, title, company, location, fit_score, reason, evidence,
+            source_key, first_seen_at, last_seen_at, original_url
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://jobs.test/old",
+            "Buyer",
+            "Example",
+            "Munich",
+            80,
+            "Fit",
+            "Buying",
+            "source",
+            "first",
+            "last",
+            "https://jobs.test/old",
+        ),
+    )
+    conn.execute(
+        "insert into backlog(url, status, queued_at) values (?, 'queued', ?)",
+        ("https://queue.test/later", "2026-01-01T00:00:02+00:00"),
+    )
+    conn.execute(
+        "insert into backlog(url, status, queued_at) values (?, 'queued', ?)",
+        ("https://queue.test/earlier", "2026-01-01T00:00:01+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path, temp_loaded.config)
+
+    assert db.conn.execute("pragma user_version").fetchone()[0] == 3
+    assert db.count_rows("jobs") == 1
+    assert db.page_status("https://pages.test/final") == "ok"
+    rows = db.conn.execute(
+        "select url, rating, queue_position from backlog order by queue_position"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("https://queue.test/earlier", 80, 1),
+        ("https://queue.test/later", 80, 2),
+    ]
+    db.close()
+
+
 def test_malformed_v2_constraints_are_rejected(tmp_path: Path, temp_loaded) -> None:
     path = tmp_path / "malformed.sqlite"
     conn = sqlite3.connect(path)
@@ -114,7 +188,7 @@ def test_malformed_v2_constraints_are_rejected(tmp_path: Path, temp_loaded) -> N
     conn.execute(
         "create table backlog (url text primary key, status text not null, queued_at text not null)"
     )
-    conn.execute(f"pragma user_version = {SCHEMA_VERSION}")
+    conn.execute("pragma user_version = 2")
     conn.commit()
     conn.close()
 
@@ -122,14 +196,14 @@ def test_malformed_v2_constraints_are_rejected(tmp_path: Path, temp_loaded) -> N
         Database(path, temp_loaded.config)
 
 
-def test_backlog_rejects_duplicates_and_retries_error_pages(
+def test_backlog_rejects_duplicates_but_does_not_consult_pages(
     tmp_path: Path, temp_loaded
 ) -> None:
     temp_loaded.config.crawler.retry_error_pages = True
     db = Database(tmp_path / "backlog.sqlite", temp_loaded.config)
 
-    assert db.enqueue("https://queue.test/new") is True
-    assert db.enqueue("https://queue.test/new") is False
+    assert db.enqueue("https://queue.test/new", rating=80) is True
+    assert db.enqueue("https://queue.test/new", rating=80) is False
     assert db.queued_count() == 1
     assert db.pop_backlog() == "https://queue.test/new"
     assert db.pop_backlog() is None
@@ -140,13 +214,59 @@ def test_backlog_rejects_duplicates_and_retries_error_pages(
     assert db.page_status("https://queue.test/final") == "ok"
 
     db.record_page("https://pages.test/error", "https://pages.test/error", "error:Timeout")
-    assert db.can_revisit("https://pages.test/error") is True
-    assert db.enqueue("https://pages.test/error") is True
+    assert db.enqueue("https://pages.test/error", rating=50) is True
 
     db.record_page("https://pages.test/ok", "https://pages.test/final", "ok")
-    assert db.was_visited("https://pages.test/final") is True
-    assert db.enqueue("https://pages.test/final") is False
-    assert db.reset_backlog() == 1
+    assert db.enqueue("https://pages.test/final", rating=60) is True
+    assert db.reset_backlog() == 2
+    db.close()
+
+
+def test_rating_order_uses_fifo_for_equal_ratings(tmp_path: Path, temp_loaded) -> None:
+    temp_loaded.config.run.backlog_order = "rating"
+    db = Database(tmp_path / "rating.sqlite", temp_loaded.config)
+
+    assert db.enqueue("https://queue.test/low", rating=20) is True
+    assert db.enqueue("https://queue.test/high-first", rating=95) is True
+    assert db.enqueue("https://queue.test/high-second", rating=95) is True
+    assert db.enqueue("https://queue.test/seed", rating=80) is True
+
+    assert db.pop_backlog() == "https://queue.test/high-first"
+    assert db.pop_backlog() == "https://queue.test/high-second"
+    assert db.pop_backlog() == "https://queue.test/seed"
+    assert db.pop_backlog() == "https://queue.test/low"
+    db.close()
+
+
+def test_duplicate_backlog_url_keeps_maximum_rating_and_fifo_position(
+    tmp_path: Path, temp_loaded
+) -> None:
+    db = Database(tmp_path / "duplicate-rating.sqlite", temp_loaded.config)
+    url = "https://queue.test/careers"
+
+    assert db.enqueue(url, rating=80) is True
+    original = db.conn.execute(
+        "select queued_at, queue_position from backlog where url = ?", (url,)
+    ).fetchone()
+    assert db.enqueue(url, rating=60) is False
+    assert db.enqueue(url, rating=90) is True
+
+    updated = db.conn.execute(
+        "select queued_at, rating, queue_position from backlog where url = ?", (url,)
+    ).fetchone()
+    assert tuple(updated) == (original["queued_at"], 90, original["queue_position"])
+    db.close()
+
+
+@pytest.mark.parametrize("rating", [-1, 101, True, 1.5])
+def test_backlog_rating_must_be_an_integer_from_zero_to_one_hundred(
+    tmp_path: Path, temp_loaded, rating
+) -> None:
+    db = Database(tmp_path / "invalid-rating.sqlite", temp_loaded.config)
+
+    with pytest.raises(ValueError, match="integer from 0 to 100"):
+        db.enqueue("https://queue.test/invalid", rating=rating)
+
     db.close()
 
 
@@ -176,8 +296,8 @@ def test_candidate_claim_retries_only_transient_http_errors(
     for status_code in (408, 425, 429, 500, 503, 599):
         db.record_page(url, final_url, f"error:http_{status_code}")
         assert db.claim_candidate(final_url) is True
-    assert db.enqueue(final_url) is False
-    assert db.enqueue(final_url, allow_visited=True) is True
+    assert db.enqueue(final_url, rating=80) is True
+    assert db.enqueue(final_url, rating=80) is False
     db.close()
 
 
@@ -188,13 +308,13 @@ def test_reopening_database_recovers_interrupted_backlog(
     temp_loaded.config.run.backlog_order = "fifo"
     temp_loaded.config.crawler.retry_error_pages = True
     db = Database(path, temp_loaded.config)
-    assert db.enqueue("https://queue.test/interrupted") is True
+    assert db.enqueue("https://queue.test/interrupted", rating=90) is True
     assert db.pop_backlog() == "https://queue.test/interrupted"
-    assert db.enqueue("https://queue.test/error") is True
+    assert db.enqueue("https://queue.test/error", rating=70) is True
     db.mark_backlog("https://queue.test/error", "error")
-    assert db.enqueue("https://queue.test/done") is True
+    assert db.enqueue("https://queue.test/done", rating=50) is True
     db.mark_backlog("https://queue.test/done", "done")
-    assert db.enqueue("https://queue.test/skipped") is True
+    assert db.enqueue("https://queue.test/skipped", rating=40) is True
     db.mark_backlog("https://queue.test/skipped", "skipped_visited")
     db.close()
 

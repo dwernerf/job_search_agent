@@ -38,6 +38,8 @@ def test_page_prompt_contains_link_context_and_no_unresolved_placeholders(temp_l
     assert "Procurement and supplier quality profile" in rendered
     assert "https://example.test/jobs/1" in rendered
     assert "Strategic sourcing responsibilities in Munich" in rendered
+    assert "likelihood that browsing through this URL" in rendered
+    assert '"type": "explore", "fit_score": 82' in rendered
     assert re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})", rendered) is None
 
 
