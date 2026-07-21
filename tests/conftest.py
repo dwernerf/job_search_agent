@@ -40,7 +40,6 @@ def temp_loaded(sample_config_path: Path) -> LoadedConfig:
     intent_data = yaml.safe_load(intent_path.read_text(encoding="utf-8"))
     intent_data["location"] = {
         "local_area": "Munich, Bavaria, Germany",
-        "languages": ["German", "English"],
     }
     intent_data["companies"] = {
         "blacklist": [],

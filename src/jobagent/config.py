@@ -9,8 +9,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .language import unique_terms
-from .profile_knowledge import extract_profile_knowledge
+from .profile_knowledge import extract_profile_knowledge, unique_terms
 
 
 class StrictModel(BaseModel):
@@ -67,7 +66,6 @@ def default_job_link_hints() -> list[str]:
 class AppConfig(StrictModel):
     database_path: str = "data/jobs.sqlite"
     csv_export_path: str = "data/jobs.csv"
-    jsonl_export_path: str = "data/jobs.jsonl"
     log_path: str = "data/jobagent.log"
     user_agent: str = "JobMatchAgent/0.1 (+local personal job search; read-only)"
 
@@ -76,29 +74,10 @@ class TargetConfig(StrictModel):
     # local_area is filled from config/intent.yaml on startup.
     local_area: str = ""
     roles: list[str] = Field(default_factory=list)
-    # languages is filled from config/intent.yaml on startup.
-    languages: list[str] = Field(default_factory=list)
 
     @field_validator("roles")
     @classmethod
     def clean_list(cls, value: list[str]) -> list[str]:
-        return [x.strip() for x in value if str(x).strip()]
-
-
-class MultilingualConfig(StrictModel):
-    enabled: bool = True
-    primary_market_language: str = "German"
-    output_language: str = "English"
-    keep_original_job_titles: bool = True
-    treat_mixed_language_as_normal: bool = True
-    german_job_terms: list[str] = Field(default_factory=lambda: ["Stelle", "Stellenangebote", "Offene Stellen", "Jobsuche", "Karriere", "Bewerbungsportal", "Festanstellung", "Vollzeit", "Homeoffice"])
-    english_job_terms: list[str] = Field(default_factory=lambda: ["job", "jobs", "open role", "opening", "vacancy", "full-time", "part-time", "remote", "hybrid"])
-    german_career_terms: list[str] = Field(default_factory=lambda: ["Karriere", "Karriereseite", "Arbeiten bei uns", "Jobsuche", "Bewerbungsportal", "Einstieg"])
-    english_career_terms: list[str] = Field(default_factory=lambda: ["career", "careers", "career site", "join us", "work with us", "recruiting", "hiring"])
-
-    @field_validator("german_job_terms", "english_job_terms", "german_career_terms", "english_career_terms")
-    @classmethod
-    def clean_optional_lists(cls, value: list[str]) -> list[str]:
         return [x.strip() for x in value if str(x).strip()]
 
 
@@ -125,8 +104,6 @@ class LLMConfig(StrictModel):
     health_check_timeout_seconds: int = Field(default=5, gt=0)
     require_available_on_start: bool = True
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
-    response_format_type: str = "json_object"
-    thinking_enabled: bool = True
     context_window_tokens: int = Field(default=150000, gt=3000)
 
 
@@ -162,7 +139,6 @@ class RunConfig(StrictModel):
 
 
 class CrawlerConfig(StrictModel):
-    source_key_mode: Literal["domain", "domain_path1", "domain_path2"] = "domain_path1"
     allowed_schemes: list[str] = Field(default_factory=default_allowed_schemes)
     excluded_domain_substrings: list[str] = Field(default_factory=default_excluded_domains)
     excluded_file_extensions: list[str] = Field(default_factory=default_file_extensions)
@@ -196,8 +172,6 @@ class MatchingConfig(StrictModel):
 class ScoringConfig(StrictModel):
     min_score_to_export: int = Field(default=55, ge=0, le=100,
         description="Minimum fit score (0-100) for a job to be exported/saved. Jobs below this are dropped.")
-    high_fit_score_threshold: int = Field(default=80, ge=0, le=100,
-        description="Fit score threshold (0-100) used for high-fit reporting.")
 
 
 class ExplorationConfig(StrictModel):
@@ -241,7 +215,6 @@ class LoggingConfig(StrictModel):
 
 class IntentLocation(StrictModel):
     local_area: str = ""
-    languages: list[str] = Field(default_factory=list)
 
 
 class IntentCompanies(StrictModel):
@@ -257,7 +230,6 @@ class IntentConfig(StrictModel):
 class JobAgentConfig(StrictModel):
     app: AppConfig = Field(default_factory=AppConfig)
     target: TargetConfig = Field(default_factory=TargetConfig)
-    multilingual: MultilingualConfig = Field(default_factory=MultilingualConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
     seeds: SeedsConfig = Field(default_factory=SeedsConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
@@ -277,7 +249,6 @@ class JobAgentConfig(StrictModel):
 class RuntimePaths:
     database_path: Path
     csv_export_path: Path
-    jsonl_export_path: Path
     log_path: Path
     profile_path: Path
     seeds_path: Path
@@ -348,7 +319,6 @@ def load_config(path: str | os.PathLike[str] | None = None) -> LoadedConfig:
     paths = RuntimePaths(
         database_path=_resolve(project_root, config.app.database_path),
         csv_export_path=_resolve(project_root, config.app.csv_export_path),
-        jsonl_export_path=_resolve(project_root, config.app.jsonl_export_path),
         log_path=_resolve(project_root, config.app.log_path),
         profile_path=_resolve(project_root, config.profile.path),
         seeds_path=_resolve(project_root, config.seeds.path),
@@ -381,8 +351,6 @@ def _merge_intent(config: JobAgentConfig, intent: IntentConfig) -> None:
     loc = intent.location
     if loc.local_area:
         config.target.local_area = loc.local_area
-    if loc.languages:
-        config.target.languages = list(loc.languages)
 
     comp = intent.companies
     if comp.blacklist:
@@ -396,5 +364,4 @@ def _merge_intent(config: JobAgentConfig, intent: IntentConfig) -> None:
 def ensure_data_dirs(paths: RuntimePaths) -> None:
     paths.database_path.parent.mkdir(parents=True, exist_ok=True)
     paths.csv_export_path.parent.mkdir(parents=True, exist_ok=True)
-    paths.jsonl_export_path.parent.mkdir(parents=True, exist_ok=True)
     paths.log_path.parent.mkdir(parents=True, exist_ok=True)

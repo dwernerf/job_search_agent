@@ -45,7 +45,11 @@ class JobAgent:
         self.paths = loaded.paths
         ensure_data_dirs(self.paths)
         self.logger = setup_logging(self.config, self.paths.log_path)
-        self.db = db or Database(self.paths.database_path, self.config, self.paths.csv_export_path, self.paths.jsonl_export_path)
+        self.db = db or Database(
+            self.paths.database_path,
+            self.config,
+            self.paths.csv_export_path,
+        )
         self.browser_factory = browser_factory or (lambda: BrowserSession(self.config))
         self.reporter = ActionReporter(self.logger)
 
@@ -92,10 +96,9 @@ class JobAgent:
                     self.reporter.action("skip_visited", url=item_url)
                     continue
 
-                current_source_key = source_key(item_url, self.config)
+                current_source_key = source_key(item_url)
                 snapshot = PageSnapshot(url=item_url, final_url=item_url, title="", text="")
                 saved = 0
-                high_fit_count = 0
                 candidate_fetch_failures = 0
 
                 try:
@@ -115,9 +118,6 @@ class JobAgent:
 
                     # Single-stage: classify all candidate links with fetched page_context
                     enqueued = 0
-                    first_source_quality = 0
-                    first_source_notes = ""
-                    source_assessed = False
                     batch_size = self.config.crawler.batch_size_for_llm
 
                     # Build batches
@@ -148,8 +148,6 @@ class JobAgent:
                                     "link_candidate_fetch_failed",
                                     status=exc.page_status,
                                     url=link.url,
-                                    # reason=str(exc)[:500],
-                                    # **exc.report_fields(),
                                 )
                                 continue
                             except Exception as exc:
@@ -158,7 +156,6 @@ class JobAgent:
                                     "link_candidate_fetch_failed",
                                     status=f"error:{type(exc).__name__}",
                                     url=link.url,
-                                    # reason=str(exc)[:500],
                                 )
                                 continue
                             candidate_final_url = filter_url(
@@ -191,12 +188,9 @@ class JobAgent:
                                 "batch_complete",
                                 batch=f"{batch_idx + 1}/{len(batches)}",
                                 saved=0,
-                                high_fit=0,
                                 enqueued=0,
                                 fetch_failed=batch_fetch_failures,
                                 queued=self.db.queued_count(),
-                                source_quality=0,
-                                source_notes="No candidate destination was fetched successfully",
                             )
                             continue
 
@@ -218,11 +212,6 @@ class JobAgent:
                                 snapshot=snapshot,
                                 links_with_context=links_with_context,
                             )
-
-                        if not source_assessed:
-                            first_source_quality = classification.source_quality
-                            first_source_notes = classification.source_notes
-                            source_assessed = True
 
                         # The model omits URLs; bind each result to its supplied context.
                         context_by_index = {
@@ -290,8 +279,6 @@ class JobAgent:
                         page_saved = self.db.save_jobs(cleaned, current_source_key)
                         saved += page_saved
                         jobs_saved_total += page_saved
-                        batch_high_fit = sum(1 for c in cleaned if c.fit_score >= self.config.scoring.high_fit_score_threshold)
-                        high_fit_count += batch_high_fit
                         for job in cleaned:
                             self.db.record_page(
                                 url=job.original_url,
@@ -303,12 +290,9 @@ class JobAgent:
                             "batch_complete",
                             batch=f"{batch_idx + 1}/{len(batches)}",
                             saved=page_saved,
-                            high_fit=batch_high_fit,
                             enqueued=enqueued - batch_enqueued_before,
                             fetch_failed=batch_fetch_failures,
                             queued=self.db.queued_count(),
-                            source_quality=classification.source_quality,
-                            source_notes=classification.source_notes,
                         )
 
                         # Debug-level log: target page full text and LLM reasoning per link
@@ -327,24 +311,18 @@ class JobAgent:
                     self.reporter.record_page(
                         status=page_status,
                         jobs_saved=saved,
-                        high_fit_jobs=high_fit_count,
-                        source_quality=first_source_quality,
                     )
                     self.reporter.action(
                         "page_complete",
                         saved=saved,
-                        high_fit=high_fit_count,
                         enqueued=enqueued,
                         fetch_failed=candidate_fetch_failures,
                         queued=self.db.queued_count(),
-                        source_quality=first_source_quality,
-                        source_notes=first_source_notes,
                         title=snapshot.title,
                     )
                     self.logger.debug(
-                        "done jobs=%s source_quality=%s queued=%s title=%r",
+                        "done jobs=%s queued=%s title=%r",
                         saved,
-                        first_source_quality,
                         self.db.queued_count(),
                         snapshot.title[:120],
                     )
@@ -353,11 +331,9 @@ class JobAgent:
                     if isinstance(exc, BrowserFetchError):
                         page_status = exc.page_status
                         final_url = exc.final_url or snapshot.final_url or item_url
-                        error_fields = exc.report_fields()
                     else:
                         page_status = f"error:{type(exc).__name__}"
                         final_url = snapshot.final_url or item_url
-                        error_fields = {}
                     self.db.record_page(
                         url=item_url,
                         final_url=final_url,
@@ -368,13 +344,10 @@ class JobAgent:
                         "page_failed",
                         status=page_status,
                         url=item_url,
-                        # reason=str(exc)[:500],
-                        # **error_fields,
                     )
                     self.reporter.record_page(
                         status=page_status,
                         jobs_saved=saved,
-                        high_fit_jobs=high_fit_count,
                     )
 
         self.reporter.action(

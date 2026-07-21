@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import sqlite3
 from pathlib import Path
 
@@ -180,12 +179,10 @@ def test_job_upsert_preserves_first_seen_and_synchronizes_exports(
     db.close()
 
     csv_path = tmp_path / "jobs.csv"
-    jsonl_path = tmp_path / "jobs.jsonl"
     reopened = Database(
         path,
         temp_loaded.config,
         csv_export_path=csv_path,
-        jsonl_export_path=jsonl_path,
     )
     assert reopened.save_jobs([job(title="Senior Buyer")], "source-two") == 1
 
@@ -211,8 +208,6 @@ def test_job_upsert_preserves_first_seen_and_synchronizes_exports(
         "original_url",
     ]
     assert rows[0]["title"] == "Senior Buyer"
-    exported = json.loads(jsonl_path.read_text(encoding="utf-8").strip())
-    assert exported["title"] == "Senior Buyer"
     reopened.close()
 
 

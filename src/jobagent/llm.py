@@ -8,7 +8,6 @@ import requests
 
 from .config import JobAgentConfig
 from .extract import compact_text, page_decision_from_dict, parse_json_object
-from .language import language_policy_summary
 from .models import PageDecision, PageSnapshot
 from .prompts import PromptBook
 
@@ -69,11 +68,8 @@ class LocalLLMClient:
 
     def _common_values(self) -> dict[str, str]:
         return {
-            "no_think_prefix": "" if self.config.llm.thinking_enabled else "/no_think",
             "profile": self.profile_text,
             "local_area": self.config.target.local_area,
-            "target_languages": ", ".join(self.config.target.languages),
-            "language_policy": self._clip(language_policy_summary(self.config), 500),
             "min_score_to_export": str(self.config.scoring.min_score_to_export),
         }
 
@@ -107,12 +103,6 @@ class LocalLLMClient:
             "temperature": self.config.llm.temperature,
         }
 
-        if self.config.llm.response_format_type:
-            payload["response_format"] = {"type": self.config.llm.response_format_type}
-
-        if not self.config.llm.thinking_enabled:
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -125,17 +115,6 @@ class LocalLLMClient:
             json=payload,
             timeout=self.config.llm.timeout_seconds,
         )
-
-        if response.status_code >= 400 and ("response_format" in payload or "chat_template_kwargs" in payload):
-            fallback_payload = dict(payload)
-            fallback_payload.pop("response_format", None)
-            fallback_payload.pop("chat_template_kwargs", None)
-            response = requests.post(
-                endpoint,
-                headers=headers,
-                json=fallback_payload,
-                timeout=self.config.llm.timeout_seconds,
-            )
 
         if response.status_code >= 400:
             raise LLMResponseError(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import json
 import sqlite3
 from pathlib import Path
 from typing import Iterable
@@ -42,12 +41,10 @@ class Database:
         path: Path,
         config: JobAgentConfig,
         csv_export_path: str | Path | None = None,
-        jsonl_export_path: str | Path | None = None,
     ) -> None:
         self.path = Path(path)
         self.config = config
         self.csv_export_path = csv_export_path
-        self.jsonl_export_path = jsonl_export_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
@@ -56,8 +53,6 @@ class Database:
             self._recover_backlog()
             if self.csv_export_path:
                 self.export_csv(Path(self.csv_export_path))
-            if self.jsonl_export_path:
-                self.export_jsonl(Path(self.jsonl_export_path))
         except Exception:
             self.conn.close()
             raise
@@ -286,8 +281,6 @@ class Database:
         if saved:
             if self.csv_export_path:
                 self.export_csv(Path(self.csv_export_path))
-            if self.jsonl_export_path:
-                self.export_jsonl(Path(self.jsonl_export_path))
         return saved
 
     def _export_rows(self) -> list[sqlite3.Row]:
@@ -323,18 +316,6 @@ class Database:
                     ]
                 )
                 writer.writerows(rows)
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-    def export_jsonl(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        rows = self._export_rows()
-        temporary = path.with_name(f".{path.name}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8") as file:
-                for row in rows:
-                    file.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)

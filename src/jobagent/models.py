@@ -47,8 +47,6 @@ class LinkClassification:
 
 @dataclass(slots=True)
 class PageDecision:
-    source_quality: int
-    source_notes: str
     link_classifications: list[LinkClassification] = field(default_factory=list)
 
 

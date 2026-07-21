@@ -9,10 +9,7 @@ from typing import Any, Callable
 class RunStats:
     pages: int = 0
     jobs_saved: int = 0
-    high_fit_jobs: int = 0
     errors: int = 0
-    quality_total: int = 0
-    quality_count: int = 0
     actions: int = 0
 
 
@@ -59,35 +56,21 @@ class ActionReporter:
         *,
         status: str,
         jobs_saved: int = 0,
-        high_fit_jobs: int = 0,
-        source_quality: int = 0,
     ) -> None:
         self.stats.pages += 1
         self.stats.jobs_saved += max(0, jobs_saved)
-        self.stats.high_fit_jobs += max(0, high_fit_jobs)
 
         if status != "ok":
             self.stats.errors += 1
 
-        if source_quality > 0:
-            self.stats.quality_total += max(0, min(100, source_quality))
-            self.stats.quality_count += 1
-
     def run_summary(self, *, queued: int) -> None:
         elapsed = self.clock() - self.started_at
-        avg_quality = (
-            self.stats.quality_total / self.stats.quality_count
-            if self.stats.quality_count
-            else 0.0
-        )
         self.logger.info(
-            "RESULT run_summary pages=%s jobs_saved=%s high_fit_jobs=%s errors=%s "
-            "avg_source_quality=%.1f queued=%s elapsed_seconds=%.1f actions=%s",
+            "RESULT run_summary pages=%s jobs_saved=%s errors=%s "
+            "queued=%s elapsed_seconds=%.1f actions=%s",
             self.stats.pages,
             self.stats.jobs_saved,
-            self.stats.high_fit_jobs,
             self.stats.errors,
-            avg_quality,
             queued,
             elapsed,
             self.stats.actions,

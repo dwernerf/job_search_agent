@@ -50,10 +50,8 @@ def test_action_reporter_aggregates_pages_into_run_summary():
     reporter.record_page(
         status="ok",
         jobs_saved=2,
-        high_fit_jobs=1,
-        source_quality=80,
     )
-    reporter.record_page(status="error:RuntimeError", source_quality=40)
+    reporter.record_page(status="error:RuntimeError")
     clock.advance(12.5)
     reporter.run_summary(queued=3)
 
@@ -61,9 +59,7 @@ def test_action_reporter_aggregates_pages_into_run_summary():
     assert "RESULT run_summary" in output
     assert "pages=2" in output
     assert "jobs_saved=2" in output
-    assert "high_fit_jobs=1" in output
     assert "errors=1" in output
-    assert "avg_source_quality=60.0" in output
     assert "queued=3" in output
     assert "elapsed_seconds=12.5" in output
 
@@ -89,15 +85,11 @@ def test_action_reporter_prints_batch_complete_as_result():
         "batch_complete",
         batch="1/2",
         saved=2,
-        high_fit=1,
         enqueued=3,
         queued=5,
-        source_quality=80,
-        source_notes="Relevant source",
     )
 
     output = stream.getvalue()
     assert "RESULT batch_complete" in output
     assert "batch='1/2'" in output
     assert "saved='2'" in output
-    assert "source_notes='Relevant source'" in output

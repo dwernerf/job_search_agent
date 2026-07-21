@@ -30,7 +30,6 @@ def test_llm_config_matches_yaml(sample_config_path):
 
     assert loaded.config.llm.base_url == raw["llm"]["base_url"]
     assert loaded.config.llm.context_window_tokens == raw["llm"]["context_window_tokens"]
-    assert loaded.config.llm.thinking_enabled is True
     assert loaded.config.llm.timeout_seconds == raw["llm"]["timeout_seconds"]
 
 

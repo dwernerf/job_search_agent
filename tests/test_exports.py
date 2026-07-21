@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import json
 
 from jobagent.db import Database
 from jobagent.models import JobMatch
@@ -24,12 +23,10 @@ EXPORT_FIELDS = [
 
 def test_job_exports_use_the_public_schema(temp_loaded):
     csv_path = temp_loaded.paths.csv_export_path.parent / "test.csv"
-    jsonl_path = temp_loaded.paths.jsonl_export_path.parent / "test.jsonl"
     db = Database(
         temp_loaded.paths.database_path,
         temp_loaded.config,
         csv_export_path=csv_path,
-        jsonl_export_path=jsonl_path,
     )
 
     assert db.save_jobs(
@@ -50,7 +47,5 @@ def test_job_exports_use_the_public_schema(temp_loaded):
 
     with csv_path.open(encoding="utf-8", newline="") as file:
         header = next(csv.reader(file))
-    exported = json.loads(jsonl_path.read_text(encoding="utf-8").strip())
     assert header == EXPORT_FIELDS
-    assert list(exported) == EXPORT_FIELDS
     db.close()

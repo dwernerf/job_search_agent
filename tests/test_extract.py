@@ -4,12 +4,12 @@ from jobagent.extract import compact_text, page_decision_from_dict, parse_json_o
 
 
 def test_parse_json_object_strips_thinking_and_fences():
-    raw = '<think>ignored</think>```json\n{"link_classifications": [], "source_quality": 50}\n```'
+    raw = '<think>ignored</think>```json\n{"link_classifications": []}\n```'
     parsed = parse_json_object(raw)
-    assert parsed["source_quality"] == 50
+    assert parsed == {"link_classifications": []}
 
 
-def test_page_decision_parses_link_classifications_and_source_metadata():
+def test_page_decision_parses_link_classifications():
     decision = page_decision_from_dict(
         {
             "link_classifications": [
@@ -25,20 +25,16 @@ def test_page_decision_parses_link_classifications_and_source_metadata():
                 },
                 {"index": 1, "type": "explore", "fit_score": 0},
             ],
-            "source_quality": 90,
-            "source_notes": "Useful career source",
         }
     )
 
-    assert decision.source_quality == 90
-    assert decision.source_notes == "Useful career source"
     assert len(decision.link_classifications) == 2
     assert decision.link_classifications[0].title == "Buyer"
     assert decision.link_classifications[0].url == ""
     assert decision.link_classifications[1].type == "explore"
 
 
-def test_page_decision_rejects_malformed_classifications_and_clamps_quality():
+def test_page_decision_rejects_malformed_classifications():
     decision = page_decision_from_dict(
         {
             "link_classifications": [
@@ -49,14 +45,12 @@ def test_page_decision_rejects_malformed_classifications_and_clamps_quality():
                 {"index": 2, "type": "job_listing", "fit_score": 101},
                 {"index": 3, "type": "explore", "fit_score": 99},
             ],
-            "source_quality": 150,
         }
     )
 
     assert [(item.index, item.type, item.fit_score) for item in decision.link_classifications] == [
         (3, "explore", 0)
     ]
-    assert decision.source_quality == 100
 
 
 def test_compact_text_keeps_relevant_lines(temp_loaded):

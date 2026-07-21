@@ -106,6 +106,7 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Sales Manager
 - Field Sales / Außendienst Vertrieb
 - Inside Sales
+- Vice President
 - Team Lead
 - Department Lead
 - Abteilungsleiter

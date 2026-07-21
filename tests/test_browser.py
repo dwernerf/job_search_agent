@@ -22,24 +22,8 @@ class FakeClock:
 
 
 class FakeResponse:
-    def __init__(
-        self,
-        status: int,
-        *,
-        status_text: str = "",
-        headers: dict[str, str] | None = None,
-        body: str = "",
-    ) -> None:
+    def __init__(self, status: int) -> None:
         self.status = status
-        self.status_text = status_text
-        self._headers = headers or {}
-        self._body = body
-
-    def all_headers(self) -> dict[str, str]:
-        return self._headers
-
-    def text(self) -> str:
-        return self._body
 
 
 class FakePage:
@@ -84,17 +68,7 @@ def session_with_page(temp_loaded, page: FakePage, clock: FakeClock | None = Non
 
 @pytest.mark.parametrize("status", [403, 429, 503])
 def test_fetch_raises_structured_error_for_any_configured_http_error(temp_loaded, status):
-    response = FakeResponse(
-        status,
-        status_text="Blocked",
-        headers={
-            "Retry-After": "120",
-            "X-RateLimit-Remaining": "0",
-            "Set-Cookie": "secret=value",
-            "Authorization": "secret",
-        },
-        body="blocked\n" + "x" * 2000,
-    )
+    response = FakeResponse(status)
     page = FakePage(response)
     session = session_with_page(temp_loaded, page)
 
@@ -104,11 +78,7 @@ def test_fetch_raises_structured_error_for_any_configured_http_error(temp_loaded
     error = raised.value
     assert error.page_status == f"error:http_{status}"
     assert error.status_code == status
-    assert error.status_text == "Blocked"
     assert error.final_url == "https://example.test/final"
-    assert error.headers == {"retry-after": "120", "x-ratelimit-remaining": "0"}
-    assert len(error.body_excerpt) == 1500
-    assert "secret" not in str(error.report_fields())
     assert page.closed
 
 
@@ -122,10 +92,8 @@ def test_fetch_wraps_navigation_timeout_and_closes_page(temp_loaded):
     with pytest.raises(BrowserFetchError) as raised:
         session.fetch("https://example.test/start")
 
-    assert raised.value.kind == "navigation"
+    assert raised.value.kind == "navigation_timeout"
     assert raised.value.page_status == "error:navigation_timeout"
-    assert raised.value.cause_type == "NavigationTimeout"
-    assert raised.value.cause_message == "timed out"
     assert page.closed
 
 

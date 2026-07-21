@@ -71,8 +71,6 @@ def test_agent_saves_job_classified_from_fetched_link_context(temp_loaded):
     }
     llm = StaticLLM(
         PageDecision(
-            source_quality=90,
-            source_notes="Concrete linked job",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -120,8 +118,6 @@ def test_agent_canonicalizes_candidates_and_binds_returned_url(temp_loaded):
     }
     llm = StaticLLM(
         PageDecision(
-            source_quality=80,
-            source_notes="Job",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -156,14 +152,9 @@ def test_agent_records_structured_top_level_browser_error(temp_loaded):
     temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
     error = BrowserFetchError(
         kind="http",
-        phase="navigation",
         requested_url=source_url,
         final_url=final_url,
         status_code=429,
-        status_text="Too Many Requests",
-        headers={"retry-after": "120"},
-        body_excerpt="Rate limit exceeded",
-        elapsed_ms=250,
     )
     db = Database(temp_loaded.paths.database_path, temp_loaded.config)
 
@@ -171,9 +162,7 @@ def test_agent_records_structured_top_level_browser_error(temp_loaded):
         temp_loaded,
         db=db,
         browser_factory=lambda: FakeBrowser({source_url: error}),
-        llm_client=StaticLLM(
-            PageDecision(source_quality=0, source_notes="", link_classifications=[])
-        ),
+        llm_client=StaticLLM(PageDecision()),
     ).run() == 0
 
     row = db.conn.execute(
@@ -189,16 +178,12 @@ def test_candidate_browser_error_is_not_sent_to_llm_or_retried_with_source(temp_
     temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
     error = BrowserFetchError(
         kind="http",
-        phase="navigation",
         requested_url=job_url,
         final_url=job_url,
         status_code=503,
-        status_text="Unavailable",
     )
     llm = StaticLLM(
         PageDecision(
-            source_quality=20,
-            source_notes="Destination unavailable",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -253,8 +238,6 @@ def test_agent_sends_only_successfully_fetched_candidates_to_llm(temp_loaded):
     temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
     llm = StaticLLM(
         PageDecision(
-            source_quality=80,
-            source_notes="One fetched job",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -318,8 +301,6 @@ def test_agent_drops_out_of_range_classification_index(temp_loaded):
     }
     llm = StaticLLM(
         PageDecision(
-            source_quality=80,
-            source_notes="Bad index",
             link_classifications=[
                 LinkClassification(
                     index=9,
@@ -364,8 +345,6 @@ def test_agent_applies_export_score_threshold(temp_loaded):
     }
     llm = StaticLLM(
         PageDecision(
-            source_quality=75,
-            source_notes="Mixed matches",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -410,8 +389,6 @@ def test_agent_drops_jobs_from_blacklisted_companies(temp_loaded):
     }
     llm = StaticLLM(
         PageDecision(
-            source_quality=70,
-            source_notes="Job source",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -448,8 +425,6 @@ def test_agent_exploration_flag_controls_explore_enqueue(temp_loaded, exploratio
     }
     llm = StaticLLM(
         PageDecision(
-            source_quality=70,
-            source_notes="Relevant source to explore",
             link_classifications=[
                 LinkClassification(index=0, type="explore", reason="Relevant job index")
             ],
@@ -557,8 +532,6 @@ class RecoveringContextLLM:
         if self.calls == 1:
             raise ContextWindowExceeded("split this batch")
         return PageDecision(
-            source_quality=80,
-            source_notes="Recovered batch",
             link_classifications=[
                 LinkClassification(
                     index=0,
@@ -615,8 +588,6 @@ class SecondBatchFailingLLM:
         if self.calls == 2:
             raise RuntimeError("second batch failed")
         return PageDecision(
-            source_quality=80,
-            source_notes="First batch",
             link_classifications=[
                 LinkClassification(
                     index=0,

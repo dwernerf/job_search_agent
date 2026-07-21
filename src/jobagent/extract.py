@@ -5,7 +5,6 @@ import re
 from typing import Any, Literal, cast
 
 from .config import JobAgentConfig
-from .language import multilingual_relevance_terms
 from .models import LinkClassification, PageDecision, as_text
 
 
@@ -14,7 +13,15 @@ def compact_text(text: str, config: JobAgentConfig) -> str:
     lines = [line.strip() for line in normalized.splitlines() if line.strip()]
     head = lines[: config.crawler.max_compact_lines]
 
-    important_terms = multilingual_relevance_terms(config)
+    important_terms = (
+        config.target.roles
+        + config.crawler.job_link_hints
+        + config.matching.location_aliases
+        + config.matching.preferred_terms
+        + config.matching.avoid_terms
+        + config.exploration.local_area_terms
+        + config.exploration.source_discovery_terms
+    )
     important: list[str] = []
 
     for line in lines:
@@ -99,13 +106,4 @@ def page_decision_from_dict(data: dict[str, Any]) -> PageDecision:
         )
         link_classifications.append(classification)
 
-    try:
-        source_quality = int(data.get("source_quality") or 0)
-    except (TypeError, ValueError):
-        source_quality = 0
-
-    return PageDecision(
-        link_classifications=link_classifications,
-        source_quality=max(0, min(100, source_quality)),
-        source_notes=as_text(data.get("source_notes"), 1000),
-    )
+    return PageDecision(link_classifications=link_classifications)

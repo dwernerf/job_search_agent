@@ -10,9 +10,6 @@ location:
   # Human-readable target area used in prompts and logs.
   local_area: "Munich, Bavaria, Germany"
 
-  # Languages to understand. Language itself is not scored positively or negatively.
-  languages: [German, English]
-
 # --- Companies ---
 companies:
   # Drop matching jobs before persistence. Leave empty unless needed.

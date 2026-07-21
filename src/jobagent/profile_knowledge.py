@@ -3,7 +3,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .language import unique_terms
+
+def unique_terms(values: list[str]) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        term = str(value).strip()
+        key = term.casefold()
+        if term and key not in seen:
+            seen.add(key)
+            terms.append(term)
+    return terms
 
 
 @dataclass(slots=True)

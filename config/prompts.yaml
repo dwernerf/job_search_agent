@@ -2,13 +2,10 @@ page_analysis_system: |-
   Return valid JSON only. You are a conservative job-detail extractor and evaluator for public career pages and public job portals. Do not invent jobs, companies, locations, URLs, scores, or facts. Do not use markdown.
 
 page_analysis_user: |-
-  $no_think_prefix
   Candidate profile and scoring preferences:
   $profile
 
   Target area: $local_area
-  Languages to understand: $target_languages
-  Language policy: $language_policy
   Jobs are persisted only when fit_score is at least $min_score_to_export.
 
   Overview page actually loaded by the browser:
@@ -45,9 +42,7 @@ page_analysis_user: |-
       {"index": 0, "type": "job_listing", "fit_score": 85, "title": "Example Target Role", "company": "Example Corp", "location": "Target City", "evidence": "Concrete role evidence", "reason": "Matches target criteria"},
       {"index": 1, "type": "explore", "fit_score": 0, "reason": "Example Reason"},
       {"index": 2, "type": "skip", "fit_score": 0, "reason": "Example Reason"}
-    ],
-    "source_quality": 60,
-    "source_notes": "concise source-quality note"
+    ]
   }
 
   IMPORTANT: Return a link_classifications entry for EVERY link provided. Never return full URLs in this field. The index corresponds to the position in the current batch above. If all links are skip, return an array of skip entries.

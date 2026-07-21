@@ -102,21 +102,12 @@ def filter_links(
     return filtered
 
 
-def source_key(url: str, config: JobAgentConfig) -> str:
+def source_key(url: str) -> str:
     parsed = urlparse(url)
     domain = normalize_domain(parsed.netloc)
-
-    if config.crawler.source_key_mode == "domain":
-        return domain
-
     parts = [p for p in parsed.path.split("/") if p]
-    if config.crawler.source_key_mode == "domain_path1" and parts:
+    if parts:
         return f"{domain}/{parts[0].lower()}"
-    if config.crawler.source_key_mode == "domain_path2" and len(parts) >= 2:
-        return f"{domain}/{parts[0].lower()}/{parts[1].lower()}"
-    if config.crawler.source_key_mode == "domain_path2" and parts:
-        return f"{domain}/{parts[0].lower()}"
-
     return domain
 
 

@@ -11,51 +11,22 @@ from .models import LinkCandidate, PageSnapshot
 from .structured import extract_jobpostings, structured_jobs_as_text
 
 
-_ERROR_BODY_EXCERPT_CHARS = 1500
-_SAFE_ERROR_HEADERS = {
-    "age",
-    "cf-ray",
-    "date",
-    "retry-after",
-    "server",
-    "via",
-    "x-request-id",
-}
-_SAFE_ERROR_HEADER_PREFIXES = ("ratelimit-", "x-ratelimit-")
-
-
 class BrowserFetchError(RuntimeError):
     def __init__(
         self,
         *,
         kind: str,
-        phase: str,
         requested_url: str,
         final_url: str = "",
         status_code: int | None = None,
-        status_text: str = "",
-        headers: dict[str, str] | None = None,
-        body_excerpt: str = "",
-        cause_type: str = "",
-        cause_message: str = "",
-        elapsed_ms: int = 0,
     ) -> None:
         self.kind = kind
-        self.phase = phase
         self.requested_url = requested_url
         self.final_url = final_url
         self.status_code = status_code
-        self.status_text = status_text
-        self.headers = headers or {}
-        self.body_excerpt = body_excerpt
-        self.cause_type = cause_type
-        self.cause_message = cause_message
-        self.elapsed_ms = elapsed_ms
 
         if kind == "http":
-            message = f"HTTP {status_code or 0} {status_text}".strip()
-        elif cause_type:
-            message = f"browser {kind} failure ({cause_type})"
+            message = f"HTTP {status_code or 0}"
         else:
             message = f"browser {kind} failure"
         super().__init__(f"{message} while opening {requested_url}")
@@ -64,37 +35,9 @@ class BrowserFetchError(RuntimeError):
     def page_status(self) -> str:
         if self.kind == "http":
             return f"error:http_{self.status_code or 'unknown'}"
-        if self.kind == "navigation" and "timeout" in self.cause_type.casefold():
+        if self.kind == "navigation_timeout":
             return "error:navigation_timeout"
         return f"error:{self.kind}"
-
-    @property
-    def context_code(self) -> str:
-        return self.page_status.removeprefix("error:")
-
-    def report_fields(self) -> dict[str, object]:
-        fields: dict[str, object] = {
-            "kind": self.kind,
-            "phase": self.phase,
-            "elapsed_ms": self.elapsed_ms,
-        }
-        if self.final_url:
-            fields["final_url"] = self.final_url
-        if self.status_code is not None:
-            fields["status_code"] = self.status_code
-        if self.status_text:
-            fields["status_text"] = self.status_text
-        if self.cause_type:
-            fields["cause_type"] = self.cause_type
-        if self.cause_message:
-            fields["cause_message"] = self.cause_message
-        if self.headers:
-            fields["headers"] = "; ".join(
-                f"{key}={value}" for key, value in sorted(self.headers.items())
-            )
-        if self.body_excerpt:
-            fields["body_excerpt"] = self.body_excerpt
-        return fields
 
 
 class BrowserSession:
@@ -148,28 +91,23 @@ class BrowserSession:
 
         page: Any = None
         phase = "setup"
-        started_at = self._clock()
 
         try:
             page = self._context.new_page()
             page.set_default_timeout(self.config.browser.navigation_timeout_ms)
             self._pace()
-            started_at = self._clock()
             phase = "navigation"
             response = page.goto(
                 url,
                 wait_until=self.config.browser.wait_until,
                 timeout=self.config.browser.navigation_timeout_ms,
             )
-            elapsed_ms = self._elapsed_ms(started_at)
             final_url = self._page_url(page, url)
             if response is None:
                 raise BrowserFetchError(
                     kind="no_response",
-                    phase=phase,
                     requested_url=url,
                     final_url=final_url,
-                    elapsed_ms=elapsed_ms,
                 )
 
             status_code = int(response.status)
@@ -179,10 +117,8 @@ class BrowserSession:
             ):
                 raise self._http_error(
                     response=response,
-                    page=page,
                     requested_url=url,
                     final_url=final_url,
-                    elapsed_ms=elapsed_ms,
                 )
 
             if self.config.browser.network_idle_timeout_ms > 0:
@@ -242,19 +178,19 @@ class BrowserSession:
             raise
         except Exception as exc:
             if phase == "navigation":
-                kind = "navigation"
+                kind = (
+                    "navigation_timeout"
+                    if "timeout" in type(exc).__name__.casefold()
+                    else "navigation"
+                )
             elif phase == "setup":
                 kind = "setup"
             else:
                 kind = "page_processing"
             raise BrowserFetchError(
                 kind=kind,
-                phase=phase,
                 requested_url=url,
                 final_url=self._page_url(page, url),
-                cause_type=type(exc).__name__,
-                cause_message=self._single_line(str(exc))[:500],
-                elapsed_ms=self._elapsed_ms(started_at),
             ) from exc
         finally:
             if page is not None:
@@ -287,9 +223,6 @@ class BrowserSession:
             self._sleeper(remaining)
         self._last_navigation_at = self._clock()
 
-    def _elapsed_ms(self, started_at: float) -> int:
-        return max(0, round((self._clock() - started_at) * 1000))
-
     @staticmethod
     def _page_url(page: Any, fallback: str) -> str:
         try:
@@ -301,49 +234,12 @@ class BrowserSession:
         self,
         *,
         response: Any,
-        page: Any,
         requested_url: str,
         final_url: str,
-        elapsed_ms: int,
     ) -> BrowserFetchError:
-        try:
-            response_headers = response.all_headers()
-        except Exception:
-            response_headers = {}
-
-        headers: dict[str, str] = {}
-        for raw_key, raw_value in response_headers.items():
-            key = str(raw_key).casefold()
-            if key in _SAFE_ERROR_HEADERS or key.startswith(_SAFE_ERROR_HEADER_PREFIXES):
-                headers[key] = self._single_line(str(raw_value))
-
-        try:
-            body = response.text()
-        except Exception:
-            try:
-                body = page.locator("body").inner_text(
-                    timeout=self.config.browser.body_text_timeout_ms
-                )
-            except Exception:
-                body = ""
-
-        try:
-            status_text = str(response.status_text or "")
-        except Exception:
-            status_text = ""
-
         return BrowserFetchError(
             kind="http",
-            phase="navigation",
             requested_url=requested_url,
             final_url=final_url,
             status_code=int(response.status),
-            status_text=self._single_line(status_text),
-            headers=headers,
-            body_excerpt=self._single_line(str(body))[:_ERROR_BODY_EXCERPT_CHARS],
-            elapsed_ms=elapsed_ms,
         )
-
-    @staticmethod
-    def _single_line(value: str) -> str:
-        return " ".join(value.split())

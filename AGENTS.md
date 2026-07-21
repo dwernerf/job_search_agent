@@ -14,7 +14,7 @@ Single-process Python app. Entry: `src/jobagent/agent.py:main()` → `JobAgent.r
 Key modules (all in `src/jobagent/`):
 - `config.py` — strict Pydantic config loading; copies personal intent values into runtime config and derives role/relevance terms from the profile.
 - `discover.py` — seed-file and bootstrap URL generation plus startup backlog seeding.
-- `db.py` — strict SQLite v2 persistence for `jobs`, `pages`, and `backlog`; synchronizes CSV/JSONL on open and after each non-empty job save.
+- `db.py` — strict SQLite v2 persistence for `jobs`, `pages`, and `backlog`; synchronizes CSV on open and after each non-empty job save.
 - `company_filters.py` — company-blacklist matching only.
 - `llm.py` — OpenAI-compatible local LLM client, link-classification prompt rendering, and context-size estimation.
 - `browser.py` — centrally paced Playwright loading, structured fetch errors, anchor extraction, and `JobPosting` JSON-LD extraction.
@@ -25,7 +25,7 @@ Key modules (all in `src/jobagent/`):
 
 ## Config (never edit profile content in YAML)
 - `config/profile.md` — candidate profile and detailed search intent. Its complete text is sent to the LLM; parsed target roles feed bootstrap searches and parsed terms feed text compaction.
-- `config/intent.yaml` — personal short local-area/language values, company blacklist, and bootstrap company whitelist.
+- `config/intent.yaml` — personal local-area value, company blacklist, and bootstrap company whitelist.
 - `config/config.yaml` — operational knobs and defaults only.
 - `config/prompts.yaml` — generic LLM instructions. Never add role-specific content here.
 - `config/seeds.txt` — optional starting URLs.
@@ -44,11 +44,10 @@ Key modules (all in `src/jobagent/`):
 - Runtime job acceptance is limited to a successfully fetched destination context, the LLM type/score threshold, company blacklist, and URL deduplication. Location and exclusions remain LLM judgments; Python does not rescore them.
 - SQLite schema v2 contains only `jobs`, `pages`, and `backlog`. The backlog fields are `url`, `status`, and `queued_at`.
 - Job fields are `url`, `title`, `company`, `location`, `fit_score`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, and `original_url`. `url` is the final fetched URL; `original_url` is the discovered pre-redirect URL.
-- CSV/JSONL fields are `fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, and `original_url`.
-- Database startup and each non-empty `save_jobs()` call rewrite both exports from all current jobs.
-- LLM `source_quality` and `source_notes` affect reporting only, not persistence or queue order.
+- CSV fields are `fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, and `original_url`.
+- Database startup and each non-empty `save_jobs()` call rewrite the CSV export from all current jobs.
 - `run.reset_backlog_on_start` clears backlog rows only. Jobs and visited-page rows remain.
-- Reset all persisted state with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl`
+- Reset all persisted state with: `rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv`
 - Config path override: `JOBAGENT_CONFIG=/abs/path/to/config/config.yaml python -m jobagent`; keep `intent.yaml` beside it and resolve other configured paths from the containing project root.
 
 ## Tests

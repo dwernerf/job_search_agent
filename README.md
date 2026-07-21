@@ -12,7 +12,7 @@ make install && make browsers
 
 # 2. Edit the three user-facing config files
 #    config/profile.md   - roles, expertise, exclusions, and detailed preferences
-#    config/intent.yaml  - local area, languages, and company lists
+#    config/intent.yaml  - local area and company lists
 #    config/config.yaml  - LLM endpoint, context size, batching, and runtime settings
 
 # 3. Start the local LLM server and check its configured endpoint
@@ -22,7 +22,7 @@ curl http://127.0.0.1:<PORT>/v1/models
 scripts/run.sh
 ```
 
-Results are written to `data/jobs.csv`, `data/jobs.jsonl`, and `data/jobs.sqlite`.
+Results are written to `data/jobs.csv` and `data/jobs.sqlite`.
 
 Before running, set `llm.context_window_tokens` in `config/config.yaml` to the server's actual context size. Reduce `crawler.batch_size_for_llm` or `crawler.max_page_context_chars` if a classification batch is too large.
 
@@ -33,7 +33,7 @@ The agent uses five configuration inputs:
 | File | Purpose |
 |---|---|
 | `config/profile.md` | Candidate profile supplied to the LLM; also provides target roles and text-relevance terms |
-| `config/intent.yaml` | Personal values: local area, accepted languages, company blacklist, and bootstrap whitelist |
+| `config/intent.yaml` | Personal values: local area, company blacklist, and bootstrap whitelist |
 | `config/config.yaml` | Operational settings for the LLM, browser, queue, batching, score thresholds, exploration, and logging |
 | `config/prompts.yaml` | Generic LLM instructions with no role-specific content |
 | `config/seeds.txt` | Optional starting URLs for career pages and job-board results |
@@ -48,10 +48,10 @@ The agent runs one queue-driven loop:
 4. **Filter and fetch outbound destinations** - URLs are normalized, checked against URL-only crawl rules, stripped of tracking parameters, and deduplicated before Playwright opens every surviving destination and compacts its text into `page_context`. Failed destinations are logged and excluded before classification.
 5. **Classify the links** - the LLM receives the overview page plus each link's text, URL, and destination context. It returns `link_classifications` with type `job_listing`, `explore`, or `skip`.
 6. **Route classifications** - a `job_listing` at or above `scoring.min_score_to_export` becomes a job candidate. An `explore` URL enters the backlog when exploration is enabled. A `skip` result is ignored.
-7. **Filter and save** - Python applies the company blacklist, removes duplicate job URLs from the batch, and upserts jobs by URL. CSV and JSONL are rewritten from SQLite after each non-empty save.
+7. **Filter and save** - Python applies the company blacklist, removes duplicate job URLs from the batch, and upserts jobs by URL. CSV is rewritten from SQLite after each non-empty save.
 8. **Continue** - the source backlog page is marked complete and the loop runs until no queued URL remains.
 
-Fetching an outbound destination for classification does not automatically queue it. Only links classified as `explore` enter the URL-only backlog. `source_quality` and `source_notes` returned by the LLM are used in run reporting, not queue priority.
+Fetching an outbound destination for classification does not automatically queue it. Only links classified as `explore` enter the URL-only backlog.
 
 Every Playwright navigation passes through one global pacing interval configured by `run.min_delay_seconds` and `run.max_delay_seconds`. Playwright uses the application user agent configured under `app.user_agent`.
 
@@ -96,7 +96,6 @@ The complete profile is included in the LLM classification prompt. The Markdown 
 Personal overrides. Contains:
 
 - `location.local_area` - short area description supplied to bootstrap search generation, prompts, and logs
-- `location.languages` - accepted languages supplied to the prompt
 - `companies.blacklist` - drop matching job classifications before persistence
 - `companies.whitelist` - inject a company into approximately half of generated bootstrap searches
 
@@ -104,11 +103,11 @@ Personal overrides. Contains:
 
 Key areas to review:
 
-- **`llm`** - endpoint, model, `context_window_tokens`, timeout, temperature, thinking mode, and JSON response format
+- **`llm`** - endpoint, model, `context_window_tokens`, timeout, and temperature
 - **`browser`** - headless mode and navigation behavior
 - **`run`** - backlog reset, FIFO or shuffled ordering, and the interval between Playwright navigations
-- **`crawler`** - URL normalization/denial rules, exported `source_key` grouping, failed-page retries, LLM batch size, and destination-context size
-- **`scoring`** - minimum saved score and the threshold used only for high-fit reporting
+- **`crawler`** - URL normalization/denial rules, failed-page retries, LLM batch size, and destination-context size
+- **`scoring`** - minimum saved score
 - **`exploration`** - whether LLM-classified `explore` URLs enter the backlog
 - **`seeding`** - seed/bootstrap mode, search URL templates, and job suffixes
 - **`logging`** - info/debug level and console/file output
@@ -169,7 +168,7 @@ Filtering is URL-only. Link text is not inspected, submission endpoints such as 
 
 Legacy database schemas are not migrated. Delete an old database before starting this version. Interrupted `active` backlog rows in a valid v2 database are returned to `queued` when the database is reopened.
 
-For a saved job, `source_key` is derived from the backlog page being processed according to `crawler.source_key_mode`. An upsert preserves `first_seen_at`, updates the other job fields, and refreshes `last_seen_at`.
+For a saved job, `source_key` contains the normalized domain and first path segment of the backlog page being processed. An upsert preserves `first_seen_at`, updates the other job fields, and refreshes `last_seen_at`.
 
 The LLM decides whether a destination is a job and supplies its score and fields. Runtime job acceptance then consists of:
 
@@ -183,10 +182,7 @@ Location preferences and profile exclusions are LLM context. Python does not cal
 
 ## LLM context window
 
-The token settings are in `config/config.yaml` under `llm:`:
-
-- `context_window_tokens` - set to the server's actual context size
-- `thinking_enabled` - set to `true` only if the server still returns usable JSON
+Set `llm.context_window_tokens` in `config/config.yaml` to the server's actual context size.
 
 The client estimates prompt size with a character-based heuristic and reserves 3,000 tokens from `context_window_tokens`. Overview text and each destination context have fixed caps. If a batch exceeds the estimate, the agent defers its final link to a separate batch and retries the reduced batch once; reduce the batch or context setting if the retry still does not fit.
 
@@ -196,16 +192,15 @@ The client estimates prompt size with a character-based heuristic and reserves 3
 |---|---|
 | `data/jobs.sqlite` | SQLite v2 jobs, visited pages, and URL backlog |
 | `data/jobs.csv` | Spreadsheet-friendly job rows |
-| `data/jobs.jsonl` | The same job rows as newline-delimited JSON objects |
 | `data/jobagent.log` | Run log |
 
-CSV and JSONL use these fields, in this order:
+CSV uses these fields, in this order:
 
 `fit_score`, `title`, `company`, `location`, `url`, `reason`, `evidence`, `source_key`, `first_seen_at`, `last_seen_at`, `original_url`
 
-Both exports are synchronized from all SQLite job rows on database startup and after every `save_jobs()` call that writes at least one job. Rows are ordered by descending fit score and then most recent `last_seen_at`.
+The export is synchronized from all SQLite job rows on database startup and after every `save_jobs()` call that writes at least one job. Rows are ordered by descending fit score and then most recent `last_seen_at`.
 
-For failed browser navigations, the log includes a safe diagnostic subset: failure phase, final URL, status/status text, elapsed time, selected rate-limit/server/request headers, and a flattened response-body excerpt. Cookie and authorization headers are never logged. Top-level failures persist concise statuses such as `error:http_429` or `error:navigation_timeout`. A failed candidate is logged, excluded from the LLM request, and not persisted as a visited page. If the source itself loaded and was processed, it is still marked complete.
+Failed browser navigations retain the requested/final URL, failure category, and HTTP status when available. Top-level failures persist concise statuses such as `error:http_429` or `error:navigation_timeout`. A failed candidate is logged, excluded from the LLM request, and not persisted as a visited page. If the source itself loaded and was processed, it is still marked complete.
 
 Inspect top jobs:
 
@@ -219,7 +214,7 @@ from jobs order by fit_score desc, last_seen_at desc limit 25;
 Reset all persisted state and exports:
 
 ```bash
-rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl
+rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv
 ```
 
 ## Tests
@@ -246,7 +241,7 @@ PYTHONPATH=src python -m compileall -q src tests
 Check `seeding.mode` and verify that `config/seeds.txt` contains usable URLs. A URL already present in `pages` is treated as visited even if backlog rows were reset. For a deliberately clean run:
 
 ```bash
-rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv data/jobs.jsonl
+rm -f data/jobs.sqlite data/jobs.sqlite-* data/jobs.csv
 ```
 
 ### LLM connection errors

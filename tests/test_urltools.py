@@ -105,6 +105,6 @@ def test_filter_links_does_not_inspect_link_text_or_limit_candidates(temp_loaded
 
 def test_source_key_uses_normalized_domain_and_first_path_segment(temp_loaded):
     assert (
-        source_key("https://www.Example.com/Careers/openings", temp_loaded.config)
+        source_key("https://www.Example.com/Careers/openings")
         == "example.com/careers"
     )
