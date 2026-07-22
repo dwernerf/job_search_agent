@@ -60,4 +60,15 @@ def test_compact_text_keeps_relevant_lines(temp_loaded):
     noise = "unrelated navigation " * 10
     text = "\n".join([noise] * 181 + ["Procurement Manager role in Munich"])
     compacted = compact_text(text, temp_loaded.config)
+
+    assert len(compacted) <= temp_loaded.config.crawler.max_page_context_chars
     assert "Procurement Manager role in Munich" in compacted
+
+
+def test_compact_text_uses_full_character_budget_without_relevant_lines(temp_loaded):
+    temp_loaded.config.crawler.max_page_context_chars = 80
+
+    compacted = compact_text("ordinary text\n" * 20, temp_loaded.config)
+
+    assert len(compacted) == 80
+    assert compacted.startswith("ordinary text\nordinary text")

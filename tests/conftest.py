@@ -29,6 +29,7 @@ def temp_loaded(sample_config_path: Path) -> LoadedConfig:
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     data["run"]["min_delay_seconds"] = 0
     data["run"]["max_delay_seconds"] = 0
+    data["run"]["reset_pages_on_start"] = False
     data["browser"]["headless"] = True
     data["logging"]["console"] = False
     data["logging"]["file"] = False

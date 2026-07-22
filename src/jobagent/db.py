@@ -240,40 +240,6 @@ class Database:
         ).fetchone()
         return str(row["status"]) if row else None
 
-    def claim_candidate(self, url: str) -> bool:
-        try:
-            self.conn.execute("begin immediate")
-            row = self.conn.execute(
-                """
-                select url, status from pages
-                where url = ? or final_url = ?
-                order by case when url = ? then 0 else 1 end
-                limit 1
-                """,
-                (url, url, url),
-            ).fetchone()
-            if row is not None:
-                if not (
-                    self.config.crawler.retry_error_pages
-                    and self._is_retryable_http_error(str(row["status"]))
-                ):
-                    self.conn.commit()
-                    return False
-                self.conn.execute(
-                    "update pages set status = 'ok' where url = ?",
-                    (str(row["url"]),),
-                )
-            else:
-                self.conn.execute(
-                    "insert into pages(url, final_url, status) values (?, ?, 'ok')",
-                    (url, url),
-                )
-            self.conn.commit()
-            return True
-        except Exception:
-            self.conn.rollback()
-            raise
-
     @staticmethod
     def _is_retryable_http_error(status: str) -> bool:
         prefix = "error:http_"
@@ -284,6 +250,27 @@ class Database:
         except ValueError:
             return False
         return status_code in {408, 425, 429} or 500 <= status_code <= 599
+
+    def reset_retryable_page_errors(self) -> int:
+        rows = self.conn.execute("select url, status from pages").fetchall()
+        retryable_urls = [
+            str(row["url"])
+            for row in rows
+            if self._is_retryable_http_error(str(row["status"]))
+        ]
+        if not retryable_urls:
+            return 0
+        try:
+            self.conn.execute("begin immediate")
+            self.conn.executemany(
+                "delete from pages where url = ?",
+                ((url,) for url in retryable_urls),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return len(retryable_urls)
 
     def enqueue(self, url: str, *, rating: int) -> bool:
         if (
@@ -345,18 +332,14 @@ class Database:
     def complete_backlog(self, url: str, final_url: str) -> None:
         try:
             self.conn.execute("begin immediate")
-            cursor = self.conn.execute(
+            self.conn.execute(
                 """
-                update pages set final_url = ?, status = 'ok'
-                where url = ? or final_url = ?
+                delete from pages
+                where status like 'error:%'
+                  and (url in (?, ?) or final_url in (?, ?))
                 """,
-                (final_url, url, url),
+                (url, final_url, url, final_url),
             )
-            if cursor.rowcount == 0:
-                self.conn.execute(
-                    "insert into pages(url, final_url, status) values (?, ?, 'ok')",
-                    (url, final_url),
-                )
             self.conn.execute("delete from backlog where url = ?", (url,))
             self.conn.commit()
         except Exception:
@@ -369,6 +352,11 @@ class Database:
 
     def reset_backlog(self) -> int:
         cursor = self.conn.execute("delete from backlog")
+        self.conn.commit()
+        return cursor.rowcount
+
+    def reset_pages(self) -> int:
+        cursor = self.conn.execute("delete from pages")
         self.conn.commit()
         return cursor.rowcount
 

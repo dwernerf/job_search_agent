@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from jobagent.db import Database
-from jobagent.discover import bootstrap_queries, read_seed_urls, seed_backlog
+from jobagent.discover import SEED_RATING, bootstrap_queries, read_seed_urls, seed_backlog
 
 
 def test_bootstrap_queries_use_target_config(temp_loaded, monkeypatch):
@@ -23,7 +23,7 @@ def test_seed_backlog_reads_seed_file(temp_loaded):
     assert count == 1
     assert db.conn.execute(
         "select rating from backlog where url = ?", ("https://acme.test/careers",)
-    ).fetchone()["rating"] == 80
+    ).fetchone()["rating"] == SEED_RATING
     assert db.pop_backlog() == "https://acme.test/careers"
     db.close()
 
@@ -44,7 +44,7 @@ def test_bootstrap_seeding_is_independent_of_runtime_exploration(temp_loaded, mo
     assert any(url.startswith("https://search.brave.com/search?q=") for url in urls)
     assert {
         row["rating"] for row in db.conn.execute("select rating from backlog")
-    } == {80}
+    } == {SEED_RATING}
     db.close()
 
 

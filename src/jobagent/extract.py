@@ -11,36 +11,50 @@ from .models import LinkClassification, PageDecision, as_text
 def compact_text(text: str, config: JobAgentConfig) -> str:
     normalized = re.sub(r"[ \t]+", " ", text or "")
     lines = [line.strip() for line in normalized.splitlines() if line.strip()]
-    head = lines[: config.crawler.max_compact_lines]
+    max_chars = config.crawler.max_page_context_chars
 
-    important_terms = (
-        config.target.roles
-        + config.crawler.job_link_hints
-        + config.matching.location_aliases
-        + config.matching.preferred_terms
-        + config.matching.avoid_terms
-        + config.exploration.local_area_terms
-        + config.exploration.source_discovery_terms
+    important_terms = tuple(
+        term.lower()
+        for term in (
+            config.target.roles
+            + config.crawler.job_link_hints
+            + config.matching.location_aliases
+            + config.matching.preferred_terms
+            + config.matching.avoid_terms
+            + config.exploration.local_area_terms
+            + config.exploration.source_discovery_terms
+        )
+        if term.strip()
     )
+    marker = "\n\nLIKELY RELEVANT LINES:\n"
     important: list[str] = []
+    seen_important: set[str] = set()
+    important_budget = max(0, max_chars // 2 - len(marker))
+    important_chars = 0
 
     for line in lines:
         low = line.lower()
-        if any(term.lower() in low for term in important_terms):
-            important.append(line)
-        if len(important) >= config.crawler.max_important_lines:
+        if not any(term in low for term in important_terms):
+            continue
+        if line in seen_important:
+            continue
+        separator_chars = 1 if important else 0
+        remaining = important_budget - important_chars - separator_chars
+        if remaining <= 0:
+            break
+        piece = line[:remaining]
+        important.append(piece)
+        seen_important.add(line)
+        important_chars += separator_chars + len(piece)
+        if len(piece) < len(line):
             break
 
-    head_text = "\n".join(head)
     if not important:
-        return head_text[: config.crawler.max_page_text_chars]
+        return "\n".join(lines)[:max_chars]
 
-    marker = "\n\nLIKELY RELEVANT LINES:\n"
-    important_text = "\n".join(dict.fromkeys(important))
-    important_budget = max(0, config.crawler.max_page_text_chars // 2 - len(marker))
-    suffix = marker + important_text[:important_budget]
-    head_budget = max(0, config.crawler.max_page_text_chars - len(suffix))
-    return head_text[:head_budget] + suffix
+    suffix = marker + "\n".join(important)
+    head_budget = max(0, max_chars - len(suffix))
+    return "\n".join(lines)[:head_budget] + suffix
 
 
 

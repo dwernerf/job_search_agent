@@ -15,6 +15,7 @@ companies:
   # Drop matching jobs before persistence. Leave empty unless needed.
   blacklist:
     - Futrue GmbH
+    - PharmaSGP Holding SE
   # Companies to proactively search for. Randomly injected into ~50% of bootstrap queries.
   whitelist:
     - ZEISS

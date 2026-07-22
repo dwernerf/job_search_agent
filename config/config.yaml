@@ -45,9 +45,6 @@ llm:
   # Low temperature keeps extraction and scoring consistent.
   temperature: 0.1
 
-  # Set this to the context size configured in llama.cpp.
-  context_window_tokens: 150000
-
 browser:
   # Set false only for visual debugging.
   headless: true
@@ -55,24 +52,27 @@ browser:
 run:
   # Clear the backlog at each start. This prevents stale backlog items from
   # an older mode/profile run from dragging the agent into irrelevant pages.
-  # It does not delete jobs or visited-page state.
+  # It does not delete jobs or classified-page state.
   reset_backlog_on_start: true
+
+  # Clear all classified-page and page-error state at startup. Leave this false
+  # normally; enable it for one run when existing page exclusions must be reset.
+  reset_pages_on_start: false
 
   # Backlog queue ordering: "fifo" (insertion order), "shuffle" (random), or
   # "rating" (highest rating first, with FIFO as the tie-breaker).
-  backlog_order: rating
+  backlog_order: shuffle
 
   # Interval between actual Playwright navigations. Set both to zero to disable.
   min_delay_seconds: 0.2
   max_delay_seconds: 0.8
 
 crawler:
-  # Retry pages that failed in earlier runs.
-  retry_error_pages: false
+  # Retry transient HTTP page failures once on the next run.
+  retry_error_pages: true
 
-  # Number of links to send to the LLM per batch. Each link includes its own
-  # fetched page_context. If the batch exceeds the context window, the last
-  # link is deferred to its own batch and the reduced batch is retried once.
+  # Maximum successfully fetched links to send to the LLM per batch. Rejected
+  # and failed candidates do not consume a batch slot.
   batch_size_for_llm: 35
 
   # Maximum characters of page_context to include per link in the LLM prompt.
@@ -81,6 +81,9 @@ crawler:
 scoring:
   # Minimum fit score (0-100) for a job to be exported/saved. Jobs below this are dropped.
   min_score_to_export: 45
+
+  # Minimum fit score (0-100) for an explore URL to enter the backlog.
+  min_score_to_explore: 40
 
 exploration:
   # Allow links classified by the LLM as "explore" to enter the backlog.

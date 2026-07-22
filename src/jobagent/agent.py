@@ -9,9 +9,9 @@ from .config import LoadedConfig, ensure_data_dirs, load_config
 from .db import Database
 from .discover import seed_backlog
 from .extract import compact_text
-from .llm import ContextWindowExceeded, LocalLLMClient
+from .llm import LocalLLMClient
 from .logging_utils import setup_logging
-from .models import JobMatch, LinkCandidate, PageDecision, PageSnapshot
+from .models import JobMatch, PageDecision, PageSnapshot
 from .prompts import PromptBook
 from .reporting import ActionReporter
 from .urltools import filter_links, filter_url, source_key
@@ -78,10 +78,17 @@ class JobAgent:
         if self.config.run.reset_backlog_on_start:
             cleared = self.db.reset_backlog()
             self.reporter.action("reset_backlog", cleared=cleared)
+        if self.config.run.reset_pages_on_start:
+            cleared = self.db.reset_pages()
+            self.reporter.action("reset_pages", cleared=cleared)
+        elif self.config.crawler.retry_error_pages:
+            cleared = self.db.reset_retryable_page_errors()
+            self.reporter.action("reset_page_errors", cleared=cleared)
         seeded = seed_backlog(self.config, self.db, self.paths.seeds_path)
         self.reporter.action("seed_backlog", added=seeded, queued=self.db.queued_count())
 
         jobs_saved_total = 0
+        seen_urls_this_run: set[str] = set()
 
         with self.browser_factory() as browser:
             while True:
@@ -101,8 +108,10 @@ class JobAgent:
                 candidate_fetch_failures = 0
 
                 try:
+                    seen_urls_this_run.add(item_url)
                     snapshot = browser.fetch(item_url)
                     final_url = snapshot.final_url or snapshot.url
+                    seen_urls_this_run.add(final_url)
                     candidate_links = filter_links(
                         snapshot.links,
                         final_url,
@@ -118,52 +127,52 @@ class JobAgent:
                     # Single-stage: classify all candidate links with fetched page_context
                     enqueued = 0
                     batch_size = self.config.crawler.batch_size_for_llm
-                    claimed_candidate_urls: set[str] = set()
+                    candidate_idx = 0
+                    batch_idx = 0
 
-                    # Build batches
-                    batches: list[list[LinkCandidate]] = []
-                    for i in range(0, len(candidate_links), batch_size):
-                        batches.append(candidate_links[i:i + batch_size])
-
-                    for batch_idx, batch in enumerate(batches):
+                    while candidate_idx < len(candidate_links):
+                        batch_idx += 1
                         batch_enqueued_before = enqueued
                         self.reporter.action(
                             "batch_start",
-                            batch=batch_idx + 1,
-                            total_batches=len(batches),
+                            batch=batch_idx,
                             total_links=len(candidate_links),
                             url=item_url,
                         )
-                        # Fetch page_context for each link in the batch
+                        # Rejected candidates do not consume an LLM batch slot.
                         links_with_context: list[dict[str, str]] = []
-                        fetched_links: list[LinkCandidate] = []
                         batch_fetch_failures_before = candidate_fetch_failures
-                        for link in batch:
-                            if link.url not in claimed_candidate_urls:
-                                if not self.db.claim_candidate(link.url):
-                                    self.reporter.action(
-                                        "candidate_url_dropped",
-                                        url=link.url,
-                                        reason="already present in pages",
-                                    )
-                                    continue
-                                claimed_candidate_urls.add(link.url)
+                        while (
+                            candidate_idx < len(candidate_links)
+                            and len(links_with_context) < batch_size
+                        ):
+                            link = candidate_links[candidate_idx]
+                            candidate_idx += 1
+                            if self.db.page_status(link.url) is not None:
+                                self.reporter.action(
+                                    "candidate_url_dropped",
+                                    url=link.url,
+                                    reason="already present in pages",
+                                )
+                                continue
+                            if link.url in seen_urls_this_run:
+                                self.reporter.action(
+                                    "candidate_url_dropped",
+                                    url=link.url,
+                                    reason="already attempted in this run",
+                                )
+                                continue
+                            seen_urls_this_run.add(link.url)
                             try:
                                 ctx_snapshot = browser.fetch(link.url)
-                                self.db.record_page(
-                                    url=link.url,
-                                    final_url=ctx_snapshot.final_url or link.url,
-                                    status="ok",
-                                )
                                 page_context = compact_text(ctx_snapshot.text, self.config)
                             except BrowserFetchError as exc:
                                 candidate_fetch_failures += 1
-                                if exc.kind == "http":
-                                    self.db.record_page(
-                                        url=link.url,
-                                        final_url=exc.final_url or link.url,
-                                        status=exc.page_status,
-                                    )
+                                self.db.record_page(
+                                    url=link.url,
+                                    final_url=exc.final_url or link.url,
+                                    status=exc.page_status,
+                                )
                                 self.reporter.action(
                                     "link_candidate_fetch_failed",
                                     status=exc.page_status,
@@ -172,6 +181,11 @@ class JobAgent:
                                 continue
                             except Exception as exc:
                                 candidate_fetch_failures += 1
+                                self.db.record_page(
+                                    url=link.url,
+                                    final_url=link.url,
+                                    status=f"error:{type(exc).__name__}",
+                                )
                                 self.reporter.action(
                                     "link_candidate_fetch_failed",
                                     status=f"error:{type(exc).__name__}",
@@ -190,7 +204,22 @@ class JobAgent:
                                     reason="final URL rejected by URL policy",
                                 )
                                 continue
-                            fetched_links.append(link)
+                            if candidate_final_url != link.url:
+                                if self.db.page_status(candidate_final_url) is not None:
+                                    self.reporter.action(
+                                        "candidate_url_dropped",
+                                        url=candidate_final_url,
+                                        reason="final URL already present in pages",
+                                    )
+                                    continue
+                                if candidate_final_url in seen_urls_this_run:
+                                    self.reporter.action(
+                                        "candidate_url_dropped",
+                                        url=candidate_final_url,
+                                        reason="final URL already attempted in this run",
+                                    )
+                                    continue
+                                seen_urls_this_run.add(candidate_final_url)
                             links_with_context.append({
                                 "index": str(len(links_with_context)),
                                 "text": link.text,
@@ -206,7 +235,7 @@ class JobAgent:
                         if not links_with_context:
                             self.reporter.action(
                                 "batch_complete",
-                                batch=f"{batch_idx + 1}/{len(batches)}",
+                                batch=batch_idx,
                                 saved=0,
                                 enqueued=0,
                                 fetch_failed=batch_fetch_failures,
@@ -215,23 +244,10 @@ class JobAgent:
                             continue
 
                         # Classify batch
-                        try:
-                            classification = self.llm_client.classify_links_batch(
-                                snapshot=snapshot,
-                                links_with_context=links_with_context,
-                            )
-                        except ContextWindowExceeded as e:
-                            self.reporter.action("context_window_exceeded", batch=batch_idx, links=len(links_with_context), reason=str(e)[:500])
-                            deferred_link = fetched_links.pop()
-                            links_with_context.pop()
-                            if not links_with_context:
-                                self.reporter.action("batch_failed_context_window", reason="single link exceeds context window")
-                                raise
-                            batches.insert(batch_idx + 1, [deferred_link])
-                            classification = self.llm_client.classify_links_batch(
-                                snapshot=snapshot,
-                                links_with_context=links_with_context,
-                            )
+                        classification = self.llm_client.classify_links_batch(
+                            snapshot=snapshot,
+                            links_with_context=links_with_context,
+                        )
 
                         # The model omits URLs; bind each result to its supplied context.
                         context_by_index = {
@@ -262,6 +278,13 @@ class JobAgent:
 
                         for c in valid_classifications:
                             # Process each valid classification.
+                            if c.type in {"job_listing", "skip"}:
+                                context = context_by_index[c.index]
+                                self.db.record_page(
+                                    url=context["original_url"],
+                                    final_url=c.url or context["url"],
+                                    status=c.type,
+                                )
                             if c.type == "job_listing" and c.fit_score >= self.config.scoring.min_score_to_export:
                                 if not all((c.title, c.company, c.location, c.url)):
                                     self.reporter.action(
@@ -280,7 +303,11 @@ class JobAgent:
                                     reason=c.reason,
                                     evidence=c.evidence,
                                 ))
-                            elif c.type == "explore" and self.config.exploration.enabled:
+                            elif (
+                                c.type == "explore"
+                                and self.config.exploration.enabled
+                                and c.fit_score >= self.config.scoring.min_score_to_explore
+                            ):
                                 if c.url and self.db.enqueue(c.url, rating=c.fit_score):
                                     enqueued += 1
 
@@ -291,7 +318,6 @@ class JobAgent:
                                 type=c.type,
                                 fit=c.fit_score,
                                 reason=c.reason or "",
-                                chars_truncated=max(0, len((context_by_index.get(c.index) or {}).get("page_context") or "") - self.config.crawler.max_page_context_chars),
                             )
 
                         # Clean candidates (blacklist + dedup) and save
@@ -302,7 +328,7 @@ class JobAgent:
 
                         self.reporter.action(
                             "batch_complete",
-                            batch=f"{batch_idx + 1}/{len(batches)}",
+                            batch=batch_idx,
                             saved=page_saved,
                             enqueued=enqueued - batch_enqueued_before,
                             fetch_failed=batch_fetch_failures,

@@ -104,7 +104,6 @@ class LLMConfig(StrictModel):
     health_check_timeout_seconds: int = Field(default=5, gt=0)
     require_available_on_start: bool = True
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
-    context_window_tokens: int = Field(default=150000, gt=3000)
 
 
 class BrowserConfig(StrictModel):
@@ -127,6 +126,7 @@ class RunConfig(StrictModel):
     # "rating" – highest rating first, with FIFO as the tie-breaker.
     backlog_order: Literal["fifo", "shuffle", "rating"] = "fifo"
     reset_backlog_on_start: bool = True
+    reset_pages_on_start: bool = False
     min_delay_seconds: float = Field(default=0.2, ge=0)
     max_delay_seconds: float = Field(default=0.8, ge=0)
 
@@ -145,9 +145,6 @@ class CrawlerConfig(StrictModel):
     denied_url_patterns: list[str] = Field(default_factory=default_denied_url_patterns)
     job_link_hints: list[str] = Field(default_factory=default_job_link_hints)
     retry_error_pages: bool = True
-    max_compact_lines: int = Field(default=180, gt=0)
-    max_important_lines: int = Field(default=240, gt=0)
-    max_page_text_chars: int = Field(default=14000, gt=0)
     batch_size_for_llm: int = Field(default=30, gt=0)
     max_page_context_chars: int = Field(default=5000, gt=0)
 
@@ -171,6 +168,8 @@ class MatchingConfig(StrictModel):
 class ScoringConfig(StrictModel):
     min_score_to_export: int = Field(default=55, ge=0, le=100,
         description="Minimum fit score (0-100) for a job to be exported/saved. Jobs below this are dropped.")
+    min_score_to_explore: int = Field(default=40, ge=0, le=100,
+        description="Minimum fit score (0-100) for an explore URL to enter the backlog.")
 
 
 class ExplorationConfig(StrictModel):

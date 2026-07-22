@@ -24,7 +24,7 @@ scripts/run.sh
 
 Results are written to `data/jobs.csv` and `data/jobs.sqlite`.
 
-Before running, set `llm.context_window_tokens` in `config/config.yaml` to the server's actual context size. Reduce `crawler.batch_size_for_llm` or `crawler.max_page_context_chars` if a classification batch is too large.
+`crawler.batch_size_for_llm` and `crawler.max_page_context_chars` bound the number and size of destination contexts in each classification request.
 
 ## Core design
 
@@ -43,15 +43,16 @@ The agent uses five configuration inputs:
 The agent runs one queue-driven loop:
 
 1. **Check the LLM** - when enabled, request the configured `/models` endpoint before opening a browser.
-2. **Seed the backlog** - enqueue URLs from `config/seeds.txt`, generated bootstrap searches, or both, each with rating 80.
-3. **Open a backlog page** - Playwright captures its final URL, title, body text, links, and any `JobPosting` JSON-LD rendered as text.
-4. **Claim and fetch outbound destinations** - URLs are normalized, checked against URL-only crawl rules, stripped of tracking parameters, and deduplicated. A URL already present in `pages` is dropped; a new URL is immediately recorded there with `status=ok` before Playwright fetches and compacts it into `page_context`. HTTP failures update that marker and are excluded before classification.
-5. **Classify the links** - the LLM receives the overview page plus each link's text, URL, and destination context. It returns `link_classifications` with type `job_listing`, `explore`, or `skip`. For `explore`, `fit_score` estimates the likelihood of finding a suitable target-area job through that URL.
-6. **Route classifications** - a `job_listing` at or above `scoring.min_score_to_export` becomes a job candidate. An `explore` URL enters the backlog with its score as the rating when exploration is enabled. A `skip` result is ignored.
-7. **Filter and save** - Python applies the company blacklist, removes duplicate job URLs from the batch, and upserts jobs by URL. CSV is rewritten from SQLite after each non-empty save.
-8. **Continue** - the successfully processed source is recorded in `pages`, its backlog row is deleted, and the loop runs until no queued URL remains.
+2. **Apply startup state rules** - optionally clear the backlog or `pages`; otherwise remove retryable transient HTTP error markers when page retries are enabled.
+3. **Seed the backlog** - enqueue URLs from `config/seeds.txt`, generated bootstrap searches, or both, each with rating 89.
+4. **Open a backlog page** - Playwright captures its final URL, title, body text, links, and any `JobPosting` JSON-LD rendered as text.
+5. **Check and fetch outbound destinations** - URLs are normalized, checked against URL-only crawl rules, stripped of tracking parameters, and deduplicated. A requested or final URL already present in `pages` is dropped before fetching. URLs attempted during the current run are also dropped, without being persisted merely because they were opened.
+6. **Classify the links** - the LLM receives source-page metadata plus each link's text, URL, and destination context. The source body is not included. It returns `link_classifications` with type `job_listing`, `explore`, or `skip`. For `explore`, `fit_score` estimates the likelihood of finding a suitable target-area job through that URL.
+7. **Route classifications** - `job_listing` and `skip` destinations are recorded in `pages`. A `job_listing` at or above `scoring.min_score_to_export` becomes a job candidate. An `explore` URL at or above `scoring.min_score_to_explore` enters the backlog with its score as the rating when exploration is enabled, but is not recorded in `pages`.
+8. **Filter and save** - Python applies the company blacklist, removes duplicate job URLs from the batch, and upserts jobs by URL. CSV is rewritten from SQLite after each non-empty save.
+9. **Continue** - the successfully processed source is removed from the backlog without being added to `pages`, and the loop runs until no queued URL remains.
 
-Fetching an outbound destination for classification does not automatically queue it. Only links classified as `explore` enter the backlog. The `rating` queue mode processes the highest rating first and uses insertion order for ties.
+Fetching an outbound destination for classification does not automatically queue it. Only links classified as `explore` at or above `scoring.min_score_to_explore` enter the backlog. The `rating` queue mode processes the highest rating first and uses insertion order for ties.
 
 Every Playwright navigation passes through one global pacing interval configured by `run.min_delay_seconds` and `run.max_delay_seconds`. Playwright uses the application user agent configured under `app.user_agent`.
 
@@ -103,16 +104,16 @@ Personal overrides. Contains:
 
 Key areas to review:
 
-- **`llm`** - endpoint, model, `context_window_tokens`, timeout, and temperature
+- **`llm`** - endpoint, model, timeout, and temperature
 - **`browser`** - headless mode and navigation behavior
-- **`run`** - backlog reset, FIFO, shuffled, or rating-first ordering, and the interval between Playwright navigations
-- **`crawler`** - URL normalization/denial rules, failed-page retries, LLM batch size, and destination-context size
-- **`scoring`** - minimum saved score
+- **`run`** - backlog/page resets, FIFO, shuffled, or rating-first ordering, and the interval between Playwright navigations
+- **`crawler`** - URL normalization/denial rules, next-run transient HTTP retries, LLM batch size, and destination-context size
+- **`scoring`** - minimum job-export and exploration-enqueue scores
 - **`exploration`** - whether LLM-classified `explore` URLs enter the backlog
 - **`seeding`** - seed/bootstrap mode, search URL templates, and job suffixes
 - **`logging`** - info/debug level and console/file output
 
-Match `llm.context_window_tokens` to the server's context size. If a prompt exceeds the configured budget, reduce `crawler.batch_size_for_llm` or `crawler.max_page_context_chars`.
+Tune `crawler.batch_size_for_llm` and `crawler.max_page_context_chars` to fit the model server's request limit.
 
 ### 4. Optional: edit `config/seeds.txt`
 
@@ -160,17 +161,19 @@ SQLite schema version 3 contains exactly three tables:
 | `pages` | `url`, `final_url`, `status` |
 | `backlog` | `url`, `status`, `queued_at`, `rating`, `queue_position` |
 
-`pages` is the permanent attempted-URL set. Candidate deduplication normally checks only whether a requested or final URL exists there. When `crawler.retry_error_pages` is enabled, candidates with transient HTTP statuses (408, 425, 429, or 5xx) are the exception and may be claimed again when rediscovered. Backlog enqueueing does not consult `pages`: seed/bootstrap sources can run again, and an outbound destination already claimed for classification can still become an `explore` source. The backlog stores no depth or discovery context and retains only queued, active, or errored work plus its rating and stable queue position. Successful rows are deleted. Enabling `run.reset_backlog_on_start` clears only backlog rows, while saved jobs and attempted-page rows remain.
+`pages` is the durable candidate-exclusion and page-error set. Candidate deduplication checks whether a requested or final URL exists there before fetching. Successfully classified `job_listing` and `skip` destinations are persisted with their classification as the status; successfully fetched `explore` destinations and backlog sources are not. A run-local requested/final URL set prevents repeated candidate attempts within one run without blocking overview pages in later runs. Fetch failures are persisted as `error:*` markers.
+
+When `crawler.retry_error_pages` is enabled, transient HTTP markers (408, 425, 429, and 5xx) are deleted once at startup so those URLs can be attempted once in the new run. Other page errors remain blocked. Backlog enqueueing does not consult `pages`: seed/bootstrap sources can run again, and an outbound destination fetched for classification can still become an `explore` source. The backlog stores no depth or discovery context and retains only queued, active, or errored work plus its rating and stable queue position. Successful rows are deleted. `run.reset_backlog_on_start` clears only backlog rows. `run.reset_pages_on_start` clears all classification and error rows while preserving jobs and backlog; leave it disabled normally and enable it for one cleanup run when needed.
 
 The same URL policy is used for seeds, generated searches, and page links. It accepts configured HTTP schemes; requires a host; rejects configured domains, file extensions, login/account URLs, and initiative/talent-pool/general-application URLs; removes configured tracking parameters and fragments; and normalizes paths. Page links resolving to the source page or to an already-seen canonical URL are removed.
 
-Filtering is URL-only. Link text is not inspected, submission endpoints such as `/apply/submit` are not denied, and there is no per-page candidate limit or provider-specific rule. Every newly claimed URL that passes the policy is fetched before LLM classification.
+Filtering is URL-only. Link text is not inspected, submission endpoints such as `/apply/submit` are not denied, and there is no per-page candidate limit or provider-specific rule. Every unblocked URL that passes the policy is fetched before LLM classification.
 
-Valid schema-v2 databases are migrated automatically to v3. Existing backlog rows receive rating 80 and stable queue positions in their prior FIFO order. Older and malformed schemas are not migrated. Interrupted `active` backlog rows are returned to `queued` when the database is reopened. Error rows are also requeued when `crawler.retry_error_pages` is enabled; old `done` and `skipped_visited` rows are removed.
+Valid schema-v2 databases are migrated automatically to v3. Existing backlog rows receive rating 80 and stable queue positions in their prior FIFO order. Older and malformed schemas are not migrated. Interrupted `active` backlog rows are returned to `queued` when the database is reopened. Errored backlog rows are also requeued when `crawler.retry_error_pages` is enabled; old `done` and `skipped_visited` rows are removed. Historical `pages` rows do not contain classifications, so use `run.reset_pages_on_start` for one run to discard old attempted-URL markers.
 
 For a saved job, `source_key` contains the normalized domain and first path segment of the backlog page being processed. An upsert preserves `first_seen_at`, updates the other job fields, and refreshes `last_seen_at`.
 
-The LLM decides whether a destination is a job and supplies its score and fields. A job's `fit_score` measures concrete job fit; an explore classification's `fit_score` becomes its backlog rating. Runtime job acceptance then consists of:
+The LLM decides whether a destination is a job and supplies its score and fields. A job's `fit_score` measures concrete job fit; an accepted explore classification's `fit_score` becomes its backlog rating. Runtime job acceptance then consists of:
 
 - a successfully fetched destination context
 - `type == "job_listing"`
@@ -178,19 +181,21 @@ The LLM decides whether a destination is a job and supplies its score and fields
 - no company-blacklist match across the returned job text and URL
 - no duplicate URL in the current batch; SQLite subsequently upserts by URL
 
+Runtime exploration enqueueing requires `exploration.enabled`, `type == "explore"`, and `fit_score >= scoring.min_score_to_explore`. This threshold is not included in the LLM prompt and does not alter the returned score.
+
 Location preferences and profile exclusions are LLM context. Python does not calculate geographic distance or alter the returned fit score.
 
-## LLM context window
+## LLM request sizing
 
-Set `llm.context_window_tokens` in `config/config.yaml` to the server's actual context size.
+`crawler.batch_size_for_llm` limits successfully fetched destination contexts per request. Candidates dropped as already visited, failed fetches, and rejected redirects do not consume a slot; the agent continues through the source links until the batch is full or no candidates remain.
 
-The client estimates prompt size with a character-based heuristic and reserves 3,000 tokens from `context_window_tokens`. Overview text and each destination context have fixed caps. If a batch exceeds the estimate, the agent defers its final link to a separate batch and retries the reduced batch once; reduce the batch or context setting if the retry still does not fit.
+`crawler.max_page_context_chars` limits each destination context. Compaction uses part of that character budget for the start of the page and part for unique lines containing profile-derived roles, locations, preferences, exclusions, and exploration terms. The source page's body text is not sent to the LLM. There is no local token estimate or automatic request splitting; if the server rejects a request, the source is handled as a normal LLM failure.
 
 ## Outputs
 
 | File | Description |
 |---|---|
-| `data/jobs.sqlite` | SQLite v3 jobs, visited pages, and rated URL backlog |
+| `data/jobs.sqlite` | SQLite v3 jobs, classified/error pages, and rated URL backlog |
 | `data/jobs.csv` | Spreadsheet-friendly job rows |
 | `data/jobagent.log` | Run log |
 
@@ -200,7 +205,7 @@ CSV uses these fields, in this order:
 
 The export is synchronized from all SQLite job rows on database startup and after every `save_jobs()` call that writes at least one job. Rows are ordered by descending fit score and then most recent `last_seen_at`.
 
-Failed browser navigations retain the requested/final URL, failure category, and HTTP status when available. Top-level failures persist concise statuses such as `error:http_429` or `error:navigation_timeout`. A candidate HTTP failure updates its `pages` marker and is excluded from the LLM request. Transient candidate HTTP failures can be fetched again when rediscovered and retries are enabled; other candidate failures remain terminal. Source failures retain an errored backlog row; successful sources delete their backlog row.
+Failed browser navigations retain the requested/final URL, failure category, and HTTP status when available. Failures persist concise statuses such as `error:http_429`, `error:navigation_timeout`, or `error:RuntimeError` and are excluded from the LLM request. When retries are enabled, transient HTTP markers are cleared at the next startup; they are not bypassed repeatedly during the same run. Source failures retain an errored backlog row, while successful sources delete their backlog row and any matching stale error marker.
 
 Inspect top jobs:
 

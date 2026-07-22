@@ -7,17 +7,12 @@ from typing import Any
 import requests
 
 from .config import JobAgentConfig
-from .extract import compact_text, page_decision_from_dict, parse_json_object
+from .extract import page_decision_from_dict, parse_json_object
 from .models import PageDecision, PageSnapshot
 from .prompts import PromptBook
 
 
 class LLMResponseError(RuntimeError):
-    pass
-
-
-class ContextWindowExceeded(ValueError):
-    """Raised when the prompt would exceed the configured context window."""
     pass
 
 
@@ -85,7 +80,6 @@ class LocalLLMClient:
                 "final_url": snapshot.final_url,
                 "title": self._clip(snapshot.title, 500),
                 "http_status_code": str(getattr(snapshot, "status_code", 0) or 0),
-                "text": compact_text(snapshot.text, self.config),
                 "links_with_context": self._links_json_for_prompt(links_with_context),
             }
         )
@@ -138,12 +132,6 @@ class LocalLLMClient:
                 f"content={str(content)[:900]}",
             ) from exc
 
-    def _estimate_prompt_size(self, system: str, user: str) -> int:
-        """Estimate the number of tokens in the prompt using char/4 heuristic."""
-        total_chars = len(system) + len(user)
-        # Add ~3 tokens for the system/user role markers
-        return total_chars // 4 + 6
-
     def classify_links_batch(
         self,
         snapshot: PageSnapshot,
@@ -151,13 +139,6 @@ class LocalLLMClient:
     ) -> PageDecision:
         """Classify a batch of links and return the PageDecision."""
         system, user = self._render_page_prompts(snapshot, links_with_context)
-        estimated = self._estimate_prompt_size(system, user)
-        max_allowed = self.config.llm.context_window_tokens - 3000
-        if estimated > max_allowed:
-            raise ContextWindowExceeded(
-                f"Prompt size estimate {estimated} tokens exceeds available budget {max_allowed} tokens. "
-                f"Reduce batch_size_for_llm or max_page_context_chars."
-            )
         return page_decision_from_dict(
             self.chat_json(system, user)
         )

@@ -207,16 +207,21 @@ def test_backlog_rejects_duplicates_but_does_not_consult_pages(
     assert db.queued_count() == 1
     assert db.pop_backlog() == "https://queue.test/new"
     assert db.pop_backlog() is None
+    db.record_page(
+        "https://queue.test/new",
+        "https://queue.test/final",
+        "error:http_503",
+    )
     db.complete_backlog("https://queue.test/new", "https://queue.test/final")
     assert db.conn.execute(
         "select 1 from backlog where url = ?", ("https://queue.test/new",)
     ).fetchone() is None
-    assert db.page_status("https://queue.test/final") == "ok"
+    assert db.page_status("https://queue.test/final") is None
 
     db.record_page("https://pages.test/error", "https://pages.test/error", "error:Timeout")
     assert db.enqueue("https://pages.test/error", rating=50) is True
 
-    db.record_page("https://pages.test/ok", "https://pages.test/final", "ok")
+    db.record_page("https://pages.test/skip", "https://pages.test/final", "skip")
     assert db.enqueue("https://pages.test/final", rating=60) is True
     assert db.reset_backlog() == 2
     db.close()
@@ -270,34 +275,48 @@ def test_backlog_rating_must_be_an_integer_from_zero_to_one_hundred(
     db.close()
 
 
-def test_candidate_claim_retries_only_transient_http_errors(
+def test_reset_retryable_page_errors_removes_only_transient_http_errors(
     tmp_path: Path, temp_loaded
 ) -> None:
-    temp_loaded.config.crawler.retry_error_pages = False
     db = Database(tmp_path / "candidates.sqlite", temp_loaded.config)
-    url = "https://pages.test/candidate"
-    final_url = "https://pages.test/final"
+    transient_codes = (408, 425, 429, 500, 503, 599)
+    permanent_codes = (400, 403, 404, 499)
 
-    assert db.claim_candidate(url) is True
-    assert db.page_status(url) == "ok"
-    assert db.claim_candidate(url) is False
+    db.record_page("https://pages.test/skip", "https://pages.test/skip", "skip")
+    db.record_page(
+        "https://pages.test/navigation",
+        "https://pages.test/navigation",
+        "error:navigation_timeout",
+    )
+    for status_code in (*transient_codes, *permanent_codes):
+        url = f"https://pages.test/http-{status_code}"
+        db.record_page(url, url, f"error:http_{status_code}")
 
-    db.record_page(url, final_url, "error:http_503")
-    assert db.claim_candidate(final_url) is False
+    assert db.reset_retryable_page_errors() == len(transient_codes)
+    assert db.page_status("https://pages.test/skip") == "skip"
+    assert db.page_status("https://pages.test/navigation") == "error:navigation_timeout"
+    for status_code in transient_codes:
+        assert db.page_status(f"https://pages.test/http-{status_code}") is None
+    for status_code in permanent_codes:
+        assert db.page_status(f"https://pages.test/http-{status_code}") == f"error:http_{status_code}"
+    db.close()
 
-    temp_loaded.config.crawler.retry_error_pages = True
-    assert db.claim_candidate(final_url) is True
-    assert db.page_status(final_url) == "ok"
 
-    for status_code in (400, 403, 404, 499):
-        db.record_page(url, final_url, f"error:http_{status_code}")
-        assert db.claim_candidate(final_url) is False
+def test_reset_pages_preserves_jobs_and_backlog(tmp_path: Path, temp_loaded) -> None:
+    db = Database(tmp_path / "reset-pages.sqlite", temp_loaded.config)
+    db.record_page("https://pages.test/skip", "https://pages.test/skip", "skip")
+    db.record_page(
+        "https://pages.test/error",
+        "https://pages.test/error",
+        "error:http_503",
+    )
+    assert db.save_jobs([job()], "source") == 1
+    assert db.enqueue("https://queue.test/careers", rating=80) is True
 
-    for status_code in (408, 425, 429, 500, 503, 599):
-        db.record_page(url, final_url, f"error:http_{status_code}")
-        assert db.claim_candidate(final_url) is True
-    assert db.enqueue(final_url, rating=80) is True
-    assert db.enqueue(final_url, rating=80) is False
+    assert db.reset_pages() == 2
+    assert db.count_rows("pages") == 0
+    assert db.count_rows("jobs") == 1
+    assert db.count_rows("backlog") == 1
     db.close()
 
 

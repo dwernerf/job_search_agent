@@ -4,7 +4,7 @@ Edit this file to change the target roles and profile context used by the LLM. R
 
 ## Search area
 
-I am looking for jobs in the Munich area, Germany. Good locations include Munich/München and towns within roughly 15 km of Munich. Hybrid roles with regular office presence near Munich are acceptable. Remote roles are acceptable only when they can clearly be performed from Germany.
+I am looking for jobs in the Munich area, Germany. Good locations include Munich/München and towns within roughly 10 km of Munich. Hybrid roles with regular office presence near Munich are acceptable. Remote roles are acceptable only when they can clearly be performed from Germany.
 
 The target market is Germany. German-language, English-language, and mixed German-English postings are all acceptable. German employers may publish German navigation pages but English job titles.
 
@@ -64,6 +64,7 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - laser components
 - optics
 - photonics
+- strategic
 - defence
 - laser technology
 - optical assemblies
@@ -111,6 +112,8 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Chief
 - Global Head
 - Team Lead
+- Operational Buyer
+- Operativer Einkäufer
 - Department Lead
 - Abteilungsleiter
 - Teamleiter
@@ -121,6 +124,7 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - pure electronics engineer roles
 - Electronics Engineer / Elektronikentwickler
 - Electrical Engineer
+- Engineer
 - Hardware Engineer
 - Software Engineer
 - Embedded Engineer

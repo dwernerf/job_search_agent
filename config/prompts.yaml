@@ -8,14 +8,11 @@ page_analysis_user: |-
   Target area: $local_area
   Jobs are persisted only when fit_score is at least $min_score_to_export.
 
-  Overview page actually loaded by the browser:
+  Source page where the candidate links were discovered:
   Requested URL: $url
   Final URL: $final_url
   HTTP status: $http_status_code
   Page title: $title
-
-  Visible text from the loaded overview page:
-  $text
 
   Candidate links with their fetched page context. For each link, you are provided:
   - index: position in the current link batch
@@ -29,7 +26,7 @@ page_analysis_user: |-
   $links_with_context
 
   Classification Guidance:
-  - Classify each link independently using only that link's text, original_url, url, page_title, and page_context. Do not use the overview text or another link's context to fill in missing job details.
+  - Classify each link independently using only that link's text, original_url, url, page_title, and page_context. Do not use another link's context to fill in missing job details.
 
   Link classification types:
   - job_listing: The destination page is dedicated to one specific job and contains its actual title, employer, location, and enough description such as responsibilities, requirements, tasks, profile, benefits, or application context. Include fit_score, title, company, location, evidence, and reason.

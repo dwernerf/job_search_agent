@@ -70,7 +70,7 @@ def test_action_reporter_prints_batch_complete_as_result():
 
     reporter.action(
         "batch_complete",
-        batch="1/2",
+        batch=1,
         saved=2,
         enqueued=3,
         queued=5,
@@ -78,5 +78,5 @@ def test_action_reporter_prints_batch_complete_as_result():
 
     output = stream.getvalue()
     assert "RESULT batch_complete" in output
-    assert "batch='1/2'" in output
+    assert "batch='1'" in output
     assert "saved='2'" in output
