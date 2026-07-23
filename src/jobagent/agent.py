@@ -4,7 +4,12 @@ import logging
 from typing import Callable, Protocol
 
 from .browser import BrowserFetchError, BrowserSession
-from .company_filters import matches_blacklisted_company
+from .company_filters import (
+    FUZZY_MATCH_THRESHOLD,
+    company_similarity,
+    matches_blacklisted_company,
+    text_similarity,
+)
 from .config import LoadedConfig, ensure_data_dirs, load_config
 from .db import Database
 from .discover import seed_backlog
@@ -88,7 +93,6 @@ class JobAgent:
         self.reporter.action("seed_backlog", added=seeded, queued=self.db.queued_count())
 
         jobs_saved_total = 0
-        seen_urls_this_run: set[str] = set()
 
         with self.browser_factory() as browser:
             while True:
@@ -108,10 +112,8 @@ class JobAgent:
                 candidate_fetch_failures = 0
 
                 try:
-                    seen_urls_this_run.add(item_url)
                     snapshot = browser.fetch(item_url)
                     final_url = snapshot.final_url or snapshot.url
-                    seen_urls_this_run.add(final_url)
                     candidate_links = filter_links(
                         snapshot.links,
                         final_url,
@@ -155,14 +157,6 @@ class JobAgent:
                                     reason="already present in pages",
                                 )
                                 continue
-                            if link.url in seen_urls_this_run:
-                                self.reporter.action(
-                                    "candidate_url_dropped",
-                                    url=link.url,
-                                    reason="already attempted in this run",
-                                )
-                                continue
-                            seen_urls_this_run.add(link.url)
                             try:
                                 ctx_snapshot = browser.fetch(link.url)
                                 page_context = compact_text(ctx_snapshot.text, self.config)
@@ -212,14 +206,6 @@ class JobAgent:
                                         reason="final URL already present in pages",
                                     )
                                     continue
-                                if candidate_final_url in seen_urls_this_run:
-                                    self.reporter.action(
-                                        "candidate_url_dropped",
-                                        url=candidate_final_url,
-                                        reason="final URL already attempted in this run",
-                                    )
-                                    continue
-                                seen_urls_this_run.add(candidate_final_url)
                             links_with_context.append({
                                 "index": str(len(links_with_context)),
                                 "text": link.text,
@@ -320,9 +306,10 @@ class JobAgent:
                                 reason=c.reason or "",
                             )
 
-                        # Clean candidates (blacklist + dedup) and save
-                        cleaned = self._clean_jobs(batch_candidates)
-                        page_saved = self.db.save_jobs(cleaned, current_source_key)
+                        page_saved = self._clean_and_save_jobs(
+                            batch_candidates,
+                            current_source_key,
+                        )
                         saved += page_saved
                         jobs_saved_total += page_saved
 
@@ -409,19 +396,104 @@ class JobAgent:
             return bool(result[0]), str(result[1])
         return bool(result), "ok" if result else "health_check returned false"
 
-    def _clean_jobs(self, jobs: list[JobMatch]) -> list[JobMatch]:
-        cleaned: list[JobMatch] = []
-        seen: set[str] = set()
+    def _clean_and_save_jobs(
+        self,
+        jobs: list[JobMatch],
+        current_source_key: str,
+    ) -> int:
+        existing = self.db.jobs_for_dedup()
+        existing_by_url = {str(row["url"]): row for row in existing}
+        existing_order = {
+            str(row["url"]): index for index, row in enumerate(existing)
+        }
+        prepared: list[tuple[JobMatch, set[str]]] = []
+
         for job in jobs:
             if self._company_blacklisted(job):
                 self.reporter.action("job_dropped_blacklist", company=job.company[:80], url=job.url[:220])
                 continue
-            if job.url in seen:
-                self.reporter.action("job_dropped_dedup", url=job.url[:220])
+
+            existing_matches: set[str] = set()
+            for row in existing:
+                row_url = str(row["url"])
+                title_score = text_similarity(job.title, str(row["title"]))
+                company_score = company_similarity(job.company, str(row["company"]))
+                location_score = text_similarity(job.location, str(row["location"]))
+                if row_url == job.url or (
+                    title_score >= FUZZY_MATCH_THRESHOLD
+                    and company_score >= FUZZY_MATCH_THRESHOLD
+                    and location_score >= FUZZY_MATCH_THRESHOLD
+                ):
+                    existing_matches.add(row_url)
+
+            if existing_matches:
+                canonical_url = min(
+                    existing_matches,
+                    key=existing_order.__getitem__,
+                )
+                canonical = existing_by_url[canonical_url]
+                self.reporter.action(
+                    "job_matched_existing",
+                    match="url" if job.url in existing_matches else "fuzzy",
+                    url=job.original_url[:220],
+                    existing_url=canonical_url[:220],
+                    matched_rows=len(existing_matches),
+                    title_similarity=f"{text_similarity(job.title, str(canonical['title'])):.2f}",
+                    company_similarity=f"{company_similarity(job.company, str(canonical['company'])):.2f}",
+                    location_similarity=f"{text_similarity(job.location, str(canonical['location'])):.2f}",
+                )
+
+            batch_matches: list[int] = []
+            batch_scores = (0.0, 0.0, 0.0)
+            batch_exact_match = False
+            for index, (candidate, candidate_existing) in enumerate(prepared):
+                candidate_title_score = text_similarity(job.title, candidate.title)
+                candidate_company_score = company_similarity(job.company, candidate.company)
+                candidate_location_score = text_similarity(job.location, candidate.location)
+                if job.url == candidate.url or existing_matches.intersection(candidate_existing) or (
+                    candidate_title_score >= FUZZY_MATCH_THRESHOLD
+                    and candidate_company_score >= FUZZY_MATCH_THRESHOLD
+                    and candidate_location_score >= FUZZY_MATCH_THRESHOLD
+                ):
+                    batch_matches.append(index)
+                    batch_exact_match = batch_exact_match or job.url == candidate.url
+                    batch_scores = (
+                        candidate_title_score,
+                        candidate_company_score,
+                        candidate_location_score,
+                    )
+
+            if batch_matches:
+                target_index = batch_matches[0]
+                for index in reversed(batch_matches):
+                    existing_matches.update(prepared[index][1])
+                    if index != target_index:
+                        prepared.pop(index)
+                prepared[target_index] = (job, existing_matches)
+                title_score, company_score, location_score = batch_scores
+                self.reporter.action(
+                    "job_matched_batch",
+                    match="url" if batch_exact_match else "fuzzy",
+                    url=job.original_url[:220],
+                    title_similarity=f"{title_score:.2f}",
+                    company_similarity=f"{company_score:.2f}",
+                    location_similarity=f"{location_score:.2f}",
+                )
                 continue
-            seen.add(job.url)
-            cleaned.append(job)
-        return cleaned
+
+            prepared.append((job, existing_matches))
+
+        cleaned = [job for job, _ in prepared]
+        dedup_matches = {
+            job.url: tuple(sorted(urls, key=existing_order.__getitem__))
+            for job, urls in prepared
+            if urls
+        }
+        return self.db.save_jobs(
+            cleaned,
+            current_source_key,
+            dedup_matches=dedup_matches,
+        )
 
     def _company_blacklisted(self, job: JobMatch) -> bool:
         return matches_blacklisted_company(self.config, job.company, job.title, job.url, job.reason, job.evidence)

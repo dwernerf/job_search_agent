@@ -128,6 +128,8 @@ The target market is Germany. German-language, English-language, and mixed Germa
 - Hardware Engineer
 - Software Engineer
 - Embedded Engineer
+- Consultant
+- Berater
 - Application Engineer
 - Field Service Engineer
 - Service Engineer

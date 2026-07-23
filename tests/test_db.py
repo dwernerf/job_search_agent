@@ -394,6 +394,65 @@ def test_job_upsert_preserves_first_seen_and_synchronizes_exports(
     reopened.close()
 
 
+def test_job_dedup_merge_replaces_url_and_synchronizes_export(
+    tmp_path: Path,
+    temp_loaded,
+) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    db = Database(
+        tmp_path / "dedup-merge.sqlite",
+        temp_loaded.config,
+        csv_export_path=csv_path,
+    )
+    oldest_url = "https://jobs.test/oldest"
+    latest_url = "https://jobs.test/latest"
+    assert db.save_jobs([job(oldest_url)], "oldest-source") == 1
+    assert db.save_jobs([job(latest_url)], "newer-source") == 1
+    db.conn.execute(
+        "update jobs set first_seen_at = '2024-01-01' where url = ?",
+        (oldest_url,),
+    )
+    db.conn.execute(
+        "update jobs set first_seen_at = '2025-01-01' where url = ?",
+        (latest_url,),
+    )
+    db.conn.commit()
+    latest = JobMatch(
+        title="Senior Buyer",
+        company="Example AG",
+        location="Berlin",
+        url=latest_url,
+        original_url="https://search.test/latest",
+        fit_score=95,
+        reason="Latest fit",
+        evidence="Latest evidence",
+    )
+
+    assert db.save_jobs(
+        [latest],
+        "latest-source",
+        dedup_matches={latest_url: (oldest_url, latest_url)},
+    ) == 1
+
+    assert db.count_rows("jobs") == 1
+    row = db.conn.execute("select * from jobs").fetchone()
+    assert row["url"] == latest_url
+    assert row["first_seen_at"] == "2024-01-01"
+    assert row["title"] == "Senior Buyer"
+    assert row["company"] == "Example AG"
+    assert row["location"] == "Berlin"
+    assert row["fit_score"] == 95
+    assert row["source_key"] == "latest-source"
+    assert row["original_url"] == "https://search.test/latest"
+
+    with csv_path.open(encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert len(rows) == 1
+    assert rows[0]["url"] == latest_url
+    assert rows[0]["first_seen_at"] == "2024-01-01"
+    db.close()
+
+
 def test_job_save_rolls_back_if_iterable_fails(tmp_path: Path, temp_loaded) -> None:
     db = Database(tmp_path / "rollback.sqlite", temp_loaded.config)
 

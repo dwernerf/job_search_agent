@@ -375,11 +375,62 @@ class Database:
             )
         self.conn.commit()
 
-    def save_jobs(self, jobs: Iterable[JobMatch], source_key: str) -> int:
+    def jobs_for_dedup(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """
+            select * from jobs
+            order by first_seen_at, url
+            """
+        ).fetchall()
+
+    def save_jobs(
+        self,
+        jobs: Iterable[JobMatch],
+        source_key: str,
+        *,
+        dedup_matches: dict[str, tuple[str, ...]] | None = None,
+    ) -> int:
         saved = 0
         timestamp = now_iso()
+        matched_urls_by_job = dedup_matches or {}
         try:
             for job in jobs:
+                matched_urls = tuple(dict.fromkeys(matched_urls_by_job.get(job.url, ())))
+                if matched_urls:
+                    canonical_url = matched_urls[0]
+                    self.conn.executemany(
+                        "delete from jobs where url = ?",
+                        ((url,) for url in matched_urls[1:]),
+                    )
+                    cursor = self.conn.execute(
+                        """
+                        update jobs set
+                            url = ?, title = ?, company = ?, location = ?,
+                            fit_score = ?, reason = ?, evidence = ?, source_key = ?,
+                            last_seen_at = ?, original_url = ?
+                        where url = ?
+                        """,
+                        (
+                            job.url,
+                            job.title,
+                            job.company,
+                            job.location,
+                            job.fit_score,
+                            job.reason,
+                            job.evidence,
+                            source_key,
+                            timestamp,
+                            job.original_url,
+                            canonical_url,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise RuntimeError(
+                            f"canonical job disappeared during deduplication: {canonical_url}"
+                        )
+                    saved += 1
+                    continue
+
                 self.conn.execute(
                     """
                     insert into jobs(

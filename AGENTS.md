@@ -1,4 +1,5 @@
 # AGENTS.md — jobagent-local
+Do only what you are told and try to finde the minimaly invasive way to satisfy the user request.
 
 ## Run
 ```bash
@@ -35,14 +36,14 @@ Key modules (all in `src/jobagent/`):
 
 ## Key operational facts
 - **LLM must be running first.** The agent checks `llm.base_url + /models` on startup; if unavailable it stops with `llm_unavailable_stop` rather than crawling blindly.
-- Pipeline: rated seed/bootstrap URL -> browser overview -> URL filter/dedup -> persisted-page and run-local candidate checks -> fetch each unblocked outbound destination context -> LLM `link_classifications` -> persist `job_listing`/`skip` -> score threshold/company blacklist/URL dedup -> jobs; rated `explore` -> backlog.
+- Pipeline: rated seed/bootstrap URL -> browser overview -> URL filter/dedup -> persisted-page and run-local candidate checks -> fetch each unblocked outbound destination context -> LLM `link_classifications` -> persist `job_listing`/`skip` -> score threshold/company blacklist/exact and fuzzy job dedup -> jobs; rated `explore` -> backlog.
 - LLM batches contain up to `crawler.batch_size_for_llm` successfully fetched, URL-approved destinations. Dropped and failed candidates do not consume slots. Each destination context is compacted directly to `crawler.max_page_context_chars`; source-page body text is not sent to the LLM.
 - Outbound destinations are fetched before classification but are not queued unless classified as `explore` at or above `scoring.min_score_to_explore`; their `fit_score` becomes the backlog rating. The threshold is enforced only in Python and is not included in the LLM prompt.
 - URL filtering does not inspect link text, block submission endpoints, cap candidates per page, or contain provider-specific rules.
 - `run.min_delay_seconds` and `run.max_delay_seconds` control the single pacing interval between actual Playwright navigations.
 - Playwright uses the application user agent configured under `app.user_agent`.
 - HTTP and navigation failures are logged through structured `BrowserFetchError` diagnostics. Candidate URLs already present in `pages` are dropped before fetching; a run-local requested/final URL set handles additional same-run deduplication. Successfully fetched candidates are persisted only when the LLM classifies them as `job_listing` or `skip`. Fetch failures persist `error:*` markers and are excluded before the LLM call.
-- Runtime job acceptance is limited to a successfully fetched destination context, the LLM type/score threshold, company blacklist, and URL deduplication. Location and exclusions remain LLM judgments; Python does not rescore them.
+- Runtime job acceptance is limited to a successfully fetched destination context, the LLM type/score threshold, company blacklist, and exact/fuzzy job deduplication. Blacklist entries are checked by aliases and 90% company-name similarity. Existing jobs fuzzy-match across sources when title, company, and location each have at least 90% similarity. The oldest matching row retains its `first_seen_at`, other matching rows are deleted, and the latest URL, source, fields, and `last_seen_at` replace its current values. Location and exclusions remain LLM judgments; Python does not rescore them.
 - SQLite schema v3 contains only `jobs`, `pages`, and `backlog`. The backlog fields are `url`, `status`, `queued_at`, `rating`, and `queue_position`; valid v2 databases migrate automatically with rating 80.
 - Backlog enqueueing never consults `pages`. Seed/bootstrap URLs are authoritative startup work items with rating 89, while outbound candidate deduplication still happens through `pages` before fetching and LLM classification.
 - `run.backlog_order` supports `fifo`, `shuffle`, and `rating`; rating order is descending with FIFO as the tie-breaker. Rediscovering a queued URL retains the maximum rating and its original queue position.

@@ -161,7 +161,7 @@ SQLite schema version 3 contains exactly three tables:
 | `pages` | `url`, `final_url`, `status` |
 | `backlog` | `url`, `status`, `queued_at`, `rating`, `queue_position` |
 
-`pages` is the durable candidate-exclusion and page-error set. Candidate deduplication checks whether a requested or final URL exists there before fetching. Successfully classified `job_listing` and `skip` destinations are persisted with their classification as the status; successfully fetched `explore` destinations and backlog sources are not. A run-local requested/final URL set prevents repeated candidate attempts within one run without blocking overview pages in later runs. Fetch failures are persisted as `error:*` markers.
+`pages` is the durable candidate-exclusion and page-error set. Candidate deduplication checks whether a requested or final URL exists there before fetching. Successfully classified `job_listing` and `skip` destinations are persisted with their classification as the status; successfully fetched `explore` destinations and backlog sources are not. Fetch failures are persisted as `error:*` markers.
 
 When `crawler.retry_error_pages` is enabled, transient HTTP markers (408, 425, 429, and 5xx) are deleted once at startup so those URLs can be attempted once in the new run. Other page errors remain blocked. Backlog enqueueing does not consult `pages`: seed/bootstrap sources can run again, and an outbound destination fetched for classification can still become an `explore` source. The backlog stores no depth or discovery context and retains only queued, active, or errored work plus its rating and stable queue position. Successful rows are deleted. `run.reset_backlog_on_start` clears only backlog rows. `run.reset_pages_on_start` clears all classification and error rows while preserving jobs and backlog; leave it disabled normally and enable it for one cleanup run when needed.
 
@@ -171,15 +171,15 @@ Filtering is URL-only. Link text is not inspected, submission endpoints such as 
 
 Valid schema-v2 databases are migrated automatically to v3. Existing backlog rows receive rating 80 and stable queue positions in their prior FIFO order. Older and malformed schemas are not migrated. Interrupted `active` backlog rows are returned to `queued` when the database is reopened. Errored backlog rows are also requeued when `crawler.retry_error_pages` is enabled; old `done` and `skipped_visited` rows are removed. Historical `pages` rows do not contain classifications, so use `run.reset_pages_on_start` for one run to discard old attempted-URL markers.
 
-For a saved job, `source_key` contains the normalized domain and first path segment of the backlog page being processed. An upsert preserves `first_seen_at`, updates the other job fields, and refreshes `last_seen_at`.
+For a saved job, `source_key` contains the normalized domain and first path segment of the backlog page being processed. Before saving, jobs are matched by exact URL or by at least 90% normalized similarity in each of title, company, and location, regardless of source. Company matching ignores common legal and organizational suffixes. If several existing rows match, the oldest `first_seen_at` is preserved, the other matching rows are deleted, and the canonical row receives the latest URL, source, job fields, and `last_seen_at`. SQLite's exact-URL upsert remains the final uniqueness safeguard.
 
 The LLM decides whether a destination is a job and supplies its score and fields. A job's `fit_score` measures concrete job fit; an accepted explore classification's `fit_score` becomes its backlog rating. Runtime job acceptance then consists of:
 
 - a successfully fetched destination context
 - `type == "job_listing"`
 - `fit_score >= scoring.min_score_to_export`
-- no company-blacklist match across the returned job text and URL
-- no duplicate URL in the current batch; SQLite subsequently upserts by URL
+- no company-blacklist alias match across the returned job text and URL, or 90%-similar match against the returned company name
+- no exact or fuzzy duplicate in the current batch or existing jobs across sources; SQLite subsequently upserts by exact URL as a final safeguard
 
 Runtime exploration enqueueing requires `exploration.enabled`, `type == "explore"`, and `fit_score >= scoring.min_score_to_explore`. This threshold is not included in the LLM prompt and does not alter the returned score.
 

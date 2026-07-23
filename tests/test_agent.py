@@ -8,7 +8,7 @@ from jobagent.agent import JobAgent
 from jobagent.browser import BrowserFetchError
 from jobagent.db import Database
 from jobagent.discover import SEED_RATING
-from jobagent.models import LinkCandidate, LinkClassification, PageDecision, PageSnapshot
+from jobagent.models import JobMatch, LinkCandidate, LinkClassification, PageDecision, PageSnapshot
 
 
 class FakeBrowser:
@@ -173,6 +173,272 @@ def test_agent_canonicalizes_candidates_and_binds_returned_url(temp_loaded):
 
     assert db.conn.execute("select url from jobs").fetchone()["url"] == job_url
     assert browser.opened == [source_url, job_url]
+    db.close()
+
+
+def test_agent_fuzzy_matches_cross_source_and_refreshes_latest_fields(temp_loaded):
+    source_url = "https://beta.test/careers"
+    existing_url = "https://alpha.test/jobs/procurement-manager-old"
+    discovered_url = "https://alpha.test/jobs/procurement-manager-new"
+    temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
+    pages = {
+        source_url: snapshot(
+            source_url,
+            text="Careers",
+            links=[LinkCandidate(text="Procurement Manager", url=discovered_url)],
+        ),
+        discovered_url: snapshot(discovered_url, text="Senior procurement role in Munich"),
+    }
+    llm = StaticLLM(
+        PageDecision(
+            link_classifications=[
+                LinkClassification(
+                    index=0,
+                    type="job_listing",
+                    fit_score=92,
+                    title="Senior Procurement Manger",
+                    company="Siemen SE",
+                    location="Munich",
+                    evidence="New evidence",
+                    reason="Updated fit",
+                )
+            ]
+        )
+    )
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+    db.save_jobs(
+        [
+            JobMatch(
+                title="Senior Procurement Manager",
+                company="Siemens AG",
+                location="Munich",
+                url=existing_url,
+                original_url=existing_url,
+                fit_score=80,
+                reason="Old fit",
+                evidence="Old evidence",
+            )
+        ],
+        "alpha.test/careers",
+    )
+    db.conn.execute(
+        "update jobs set first_seen_at = 'preserved', last_seen_at = 'old'"
+    )
+    db.conn.commit()
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: FakeBrowser(pages),
+        llm_client=llm,
+    ).run() == 0
+
+    assert db.count_rows("jobs") == 1
+    row = db.conn.execute("select * from jobs").fetchone()
+    assert row["url"] == discovered_url
+    assert row["original_url"] == discovered_url
+    assert row["title"] == "Senior Procurement Manger"
+    assert row["company"] == "Siemen SE"
+    assert row["fit_score"] == 92
+    assert row["reason"] == "Updated fit"
+    assert row["evidence"] == "New evidence"
+    assert row["source_key"] == "beta.test/careers"
+    assert row["first_seen_at"] == "preserved"
+    assert row["last_seen_at"] != "old"
+    db.close()
+
+
+def test_agent_consolidates_fuzzy_duplicates_within_batch(temp_loaded):
+    source_url = "https://alpha.test/careers"
+    first_url = "https://alpha.test/jobs/procurement-manager-a"
+    second_url = "https://alpha.test/jobs/procurement-manager-b"
+    temp_loaded.paths.seeds_path.write_text(f"{source_url}\n", encoding="utf-8")
+    pages = {
+        source_url: snapshot(
+            source_url,
+            text="Careers",
+            links=[
+                LinkCandidate(text="Procurement Manager", url=first_url),
+                LinkCandidate(text="Procurement Manager", url=second_url),
+            ],
+        ),
+        first_url: snapshot(first_url, text="Senior procurement manager in Munich"),
+        second_url: snapshot(second_url, text="Senior procurement manager in Munich"),
+    }
+    llm = StaticLLM(
+        PageDecision(
+            link_classifications=[
+                LinkClassification(
+                    index=0,
+                    type="job_listing",
+                    fit_score=85,
+                    title="Senior Procurement Manager",
+                    company="Alpha GmbH",
+                    location="Munich",
+                ),
+                LinkClassification(
+                    index=1,
+                    type="job_listing",
+                    fit_score=90,
+                    title="Senior Procurement Manger",
+                    company="Alpha AG",
+                    location="Munich",
+                ),
+            ]
+        )
+    )
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+
+    assert JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: FakeBrowser(pages),
+        llm_client=llm,
+    ).run() == 0
+
+    assert db.count_rows("jobs") == 1
+    row = db.conn.execute("select * from jobs").fetchone()
+    assert row["url"] == second_url
+    assert row["original_url"] == second_url
+    assert row["fit_score"] == 90
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("title", "company", "location"),
+    [
+        ("Software Engineer", "Alpha AG", "Munich"),
+        ("Senior Procurement Manger", "Beta AG", "Munich"),
+        ("Senior Procurement Manger", "Alpha AG", "Berlin"),
+    ],
+)
+def test_agent_fuzzy_dedup_requires_matching_title_company_and_location(
+    temp_loaded,
+    title,
+    company,
+    location,
+):
+    existing_url = "https://alpha.test/jobs/procurement-manager"
+    discovered_url = "https://alpha.test/jobs/other"
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+    db.save_jobs(
+        [
+            JobMatch(
+                title="Senior Procurement Manager",
+                company="Alpha GmbH",
+                location="Munich",
+                url=existing_url,
+                original_url=existing_url,
+                fit_score=80,
+                reason="Fit",
+                evidence="Procurement",
+            )
+        ],
+        "alpha.test/careers",
+    )
+    agent = JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: FakeBrowser({}),
+        llm_client=StaticLLM(PageDecision()),
+    )
+
+    assert agent._clean_and_save_jobs(
+        [
+            JobMatch(
+                title=title,
+                company=company,
+                location=location,
+                url=discovered_url,
+                original_url=discovered_url,
+                fit_score=90,
+                reason="Fit",
+                evidence="Evidence",
+            )
+        ],
+        "alpha.test/careers",
+    ) == 1
+
+    assert db.count_rows("jobs") == 2
+    db.close()
+
+
+def test_agent_fuzzy_dedup_keeps_oldest_row_and_deletes_other_matches(temp_loaded):
+    oldest_url = "https://alpha.test/jobs/procurement-manager-oldest"
+    latest_url = "https://beta.test/jobs/procurement-manager-latest"
+    db = Database(temp_loaded.paths.database_path, temp_loaded.config)
+    db.save_jobs(
+        [
+            JobMatch(
+                title="Senior Procurement Manager",
+                company="Alpha GmbH",
+                location="Munich",
+                url=oldest_url,
+                original_url=oldest_url,
+                fit_score=75,
+                reason="Old fit",
+                evidence="Old evidence",
+            )
+        ],
+        "alpha.test/careers",
+    )
+    db.save_jobs(
+        [
+            JobMatch(
+                title="Senior Procurement Manager",
+                company="Alpha AG",
+                location="Munich",
+                url=latest_url,
+                original_url=latest_url,
+                fit_score=80,
+                reason="Duplicate fit",
+                evidence="Duplicate evidence",
+            )
+        ],
+        "beta.test/jobs",
+    )
+    db.conn.execute(
+        "update jobs set first_seen_at = '2024-01-01', last_seen_at = 'oldest-last' "
+        "where url = ?",
+        (oldest_url,),
+    )
+    db.conn.execute(
+        "update jobs set first_seen_at = '2025-01-01', last_seen_at = 'newer-last' "
+        "where url = ?",
+        (latest_url,),
+    )
+    db.conn.commit()
+    agent = JobAgent(
+        temp_loaded,
+        db=db,
+        browser_factory=lambda: FakeBrowser({}),
+        llm_client=StaticLLM(PageDecision()),
+    )
+
+    assert agent._clean_and_save_jobs(
+        [
+            JobMatch(
+                title="Senior Procurement Manger",
+                company="Alpha SE",
+                location="Munich",
+                url=latest_url,
+                original_url="https://search.test/redirect-to-latest",
+                fit_score=95,
+                reason="Latest fit",
+                evidence="Latest evidence",
+            )
+        ],
+        "search.test/results",
+    ) == 1
+
+    assert db.count_rows("jobs") == 1
+    row = db.conn.execute("select * from jobs").fetchone()
+    assert row["url"] == latest_url
+    assert row["original_url"] == "https://search.test/redirect-to-latest"
+    assert row["first_seen_at"] == "2024-01-01"
+    assert row["last_seen_at"] not in {"oldest-last", "newer-last"}
+    assert row["fit_score"] == 95
+    assert row["source_key"] == "search.test/results"
     db.close()
 
 
@@ -518,7 +784,7 @@ def test_agent_fetches_candidate_only_once_across_sources(temp_loaded):
     db.close()
 
 
-def test_agent_reconsiders_explore_candidate_on_next_run(temp_loaded):
+def test_agent_reconsiders_unpersisted_explore_candidate_each_time(temp_loaded):
     first_source = "https://alpha.test/careers"
     second_source = "https://beta.test/careers"
     explore_url = "https://jobs.test/openings"
@@ -558,12 +824,12 @@ def test_agent_reconsiders_explore_candidate_on_next_run(temp_loaded):
     )
 
     assert agent.run() == 0
-    assert browser.opened.count(explore_url) == 1
+    assert browser.opened.count(explore_url) == 2
     assert db.page_status(explore_url) is None
 
     assert agent.run() == 0
-    assert browser.opened.count(explore_url) == 2
-    assert len(llm.calls) == 2
+    assert browser.opened.count(explore_url) == 4
+    assert len(llm.calls) == 4
     assert db.page_status(explore_url) is None
     db.close()
 
